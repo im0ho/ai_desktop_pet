@@ -36,6 +36,473 @@ let serverProcess = null;
 let calendarWindow;
 let tray = null;
 
+const APP_INDEX_CACHE = {
+  built: false,
+  apps: [],
+};
+
+function normalizeAppKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[^a-z0-9가-힣]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function expandEnvVars(value) {
+  return String(value || '').replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`);
+}
+
+function stripTrailingArgs(value) {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1);
+  }
+  text = expandEnvVars(text);
+  text = text.replace(/,\s*\d+\s*$/i, '');
+  return text.trim();
+}
+
+function isUrlLike(value) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value || '').trim());
+}
+
+function splitCommandAndArgs(command) {
+  const text = stripTrailingArgs(command);
+  if (!text) return { file: '', args: [] };
+  if (isUrlLike(text)) return { file: text, args: [] };
+  if (text.includes('"')) {
+    const firstQuote = text.indexOf('"');
+    const secondQuote = text.indexOf('"', firstQuote + 1);
+    if (firstQuote === 0 && secondQuote > 0) {
+      const file = text.slice(1, secondQuote);
+      const args = text.slice(secondQuote + 1).trim().split(/\s+/).filter(Boolean);
+      return { file, args };
+    }
+  }
+  const parts = text.split(/\s+/);
+  if (parts.length === 1) return { file: text, args: [] };
+  return { file: parts[0], args: parts.slice(1) };
+}
+
+function uniqueByKey(items, keyFn) {
+  const map = new Map();
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, item);
+  }
+  return [...map.values()];
+}
+
+function safeReadDir(dirPath) {
+  try {
+    return fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function safeStat(filePath) {
+  try {
+    return fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function walkLimited(rootDir, maxDepth, visitor, depth = 0) {
+  if (depth > maxDepth) return;
+  const entries = safeReadDir(rootDir);
+  for (const entry of entries) {
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      walkLimited(fullPath, maxDepth, visitor, depth + 1);
+      continue;
+    }
+    visitor(fullPath, entry.name, depth);
+  }
+}
+
+function guessAliases(name) {
+  const key = normalizeAppKey(name);
+  const aliases = [];
+  if (!key) return aliases;
+
+  if (key.includes('youtube')) aliases.push('유튜브', '유투브', 'youtube');
+  if (key.includes('kakao')) aliases.push('카카오톡', '카톡', 'kakaotalk');
+  if (key.includes('discord')) aliases.push('디스코드');
+  if (key.includes('chrome')) aliases.push('크롬', '구글 크롬');
+  if (key.includes('steam')) aliases.push('스팀');
+  if (key.includes('vscode') || key.includes('visual studio code') || key.includes('visualstudio')) aliases.push('vscode', '비주얼 스튜디오 코드');
+  if (key.includes('notepad')) aliases.push('메모장');
+  if (key.includes('spotify')) aliases.push('스포티파이');
+  if (key.includes('edge')) aliases.push('엣지', 'microsoft edge');
+
+  return uniqueByKey(aliases, normalizeAppKey);
+}
+
+function createAppRecord({ name, launchType, launchTarget, source, aliases = [] }) {
+  const cleanName = String(name || '').trim();
+  const cleanTarget = String(launchTarget || '').trim();
+  const mergedAliases = uniqueByKey([cleanName, ...aliases, ...guessAliases(cleanName)], normalizeAppKey).filter(Boolean);
+  return {
+    name: cleanName,
+    launchType,
+    launchTarget: cleanTarget,
+    source,
+    aliases: mergedAliases,
+  };
+}
+
+function mergeAppRecord(appMap, record) {
+  const primaryKey = normalizeAppKey(record.name || record.launchTarget);
+  if (!primaryKey) return;
+
+  const existing = appMap.get(primaryKey);
+  if (!existing) {
+    appMap.set(primaryKey, record);
+    return;
+  }
+
+  const merged = {
+    ...existing,
+    launchTarget: existing.launchTarget || record.launchTarget,
+    launchType: existing.launchTarget ? existing.launchType : record.launchType,
+    source: uniqueByKey([existing.source, record.source].filter(Boolean), normalizeAppKey).join(', '),
+    aliases: uniqueByKey([...(existing.aliases || []), ...(record.aliases || [])], normalizeAppKey),
+  };
+  appMap.set(primaryKey, merged);
+}
+
+function addAliasIndex(appMap, aliasIndex, record) {
+  const canonicalKey = normalizeAppKey(record.name || record.launchTarget);
+  if (!canonicalKey) return;
+  const aliases = uniqueByKey([record.name, ...(record.aliases || [])], normalizeAppKey);
+  for (const alias of aliases) {
+    const key = normalizeAppKey(alias);
+    if (!key) continue;
+    if (!aliasIndex.has(key)) aliasIndex.set(key, canonicalKey);
+  }
+}
+
+function parseRegQueryOutput(output) {
+  const entries = [];
+  let current = null;
+
+  for (const rawLine of String(output || '').split(/\r?\n/)) {
+    if (!rawLine.trim()) continue;
+
+    if (/^HKEY_/i.test(rawLine.trim())) {
+      if (current) entries.push(current);
+      current = { key: rawLine.trim(), values: {} };
+      continue;
+    }
+
+    const valueMatch = rawLine.match(/^\s{4}(.+?)\s+REG_[A-Z_]+\s+(.*)$/i);
+    if (valueMatch && current) {
+      const [, valueName, valueData] = valueMatch;
+      current.values[valueName.trim()] = valueData.trim();
+    }
+  }
+
+  if (current) entries.push(current);
+  return entries;
+}
+
+function runRegQuery(rootKey) {
+  try {
+    return require('child_process').execFileSync('reg', ['query', rootKey, '/s'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+  } catch (error) {
+    return '';
+  }
+}
+
+function findExecutableInFolder(folder, hintName) {
+  const root = path.resolve(folder);
+  if (!fs.existsSync(root)) return '';
+
+  const hint = normalizeAppKey(hintName);
+  let best = '';
+  let bestScore = 0;
+  let seen = 0;
+  const MAX_FILES = 1200;
+
+  walkLimited(root, 2, (fullPath, fileName) => {
+    if (seen >= MAX_FILES) return;
+    if (!fileName.toLowerCase().endsWith('.exe')) return;
+    seen += 1;
+    const base = normalizeAppKey(path.basename(fileName, '.exe'));
+    let score = 0;
+    if (!hint || !base) score = 1;
+    else if (base === hint) score = 100;
+    else if (base.includes(hint)) score = 80;
+    else if (hint.includes(base)) score = 70;
+    else {
+      const distance = Math.abs(base.length - hint.length);
+      if (distance <= 3 && (base[0] === hint[0] || base[base.length - 1] === hint[hint.length - 1])) {
+        score = 40;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = fullPath;
+    }
+  });
+
+  return best;
+}
+
+function scanStartMenuApps(appMap, aliasIndex) {
+  const startMenuRoots = [
+    path.join(process.env.PROGRAMDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+    path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+  ].filter(Boolean);
+
+  for (const root of startMenuRoots) {
+    if (!fs.existsSync(root)) continue;
+
+    walkLimited(root, 4, (fullPath, fileName) => {
+      const lower = fileName.toLowerCase();
+      if (!lower.endsWith('.lnk') && !lower.endsWith('.url')) return;
+
+      const name = path.basename(fileName, path.extname(fileName));
+      let launchType = lower.endsWith('.url') ? 'url' : 'shortcut';
+      let launchTarget = fullPath;
+
+      if (lower.endsWith('.url')) {
+        try {
+          const content = fs.readFileSync(fullPath, 'utf8');
+          const urlMatch = content.match(/^URL=(.+)$/mi);
+          if (urlMatch && urlMatch[1]) {
+            launchTarget = urlMatch[1].trim();
+          }
+        } catch {
+          // Fallback to the .url file path if parsing fails.
+        }
+      }
+
+      const record = createAppRecord({
+        name,
+        launchType,
+        launchTarget,
+        source: 'start-menu',
+      });
+      mergeAppRecord(appMap, record);
+      addAliasIndex(appMap, aliasIndex, record);
+    });
+  }
+}
+
+function scanRegistryApps(appMap, aliasIndex) {
+  const roots = [
+    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+  ];
+
+  for (const root of roots) {
+    const output = runRegQuery(root);
+    if (!output) continue;
+
+    const entries = parseRegQueryOutput(output);
+    for (const entry of entries) {
+      const values = entry.values || {};
+      const displayName = values.DisplayName;
+      if (!displayName) continue;
+
+      const displayIcon = stripTrailingArgs(values.DisplayIcon || '');
+      const installLocation = stripTrailingArgs(values.InstallLocation || '');
+      const uninstallString = stripTrailingArgs(values.UninstallString || '');
+
+      let launchTarget = '';
+      let launchType = 'exe';
+
+      if (displayIcon && (displayIcon.toLowerCase().endsWith('.exe') || displayIcon.toLowerCase().endsWith('.lnk') || displayIcon.toLowerCase().endsWith('.url'))) {
+        launchTarget = displayIcon;
+        if (launchTarget.toLowerCase().endsWith('.lnk')) launchType = 'shortcut';
+        else if (launchTarget.toLowerCase().endsWith('.url') || isUrlLike(launchTarget)) launchType = 'url';
+      }
+
+      if (!launchTarget && installLocation) {
+        const executable = findExecutableInFolder(installLocation, displayName);
+        if (executable) {
+          launchTarget = executable;
+          launchType = 'exe';
+        }
+      }
+
+      if (!launchTarget && uninstallString) {
+        const candidate = splitCommandAndArgs(uninstallString).file;
+        if (candidate && (candidate.toLowerCase().endsWith('.exe') || isUrlLike(candidate))) {
+          launchTarget = candidate;
+          launchType = isUrlLike(candidate) ? 'url' : 'exe';
+        }
+      }
+
+      const record = createAppRecord({
+        name: displayName,
+        launchType,
+        launchTarget,
+        source: 'registry',
+      });
+      mergeAppRecord(appMap, record);
+      addAliasIndex(appMap, aliasIndex, record);
+    }
+  }
+}
+
+function scanExecutableApps(appMap, aliasIndex) {
+  const possibleRoots = [
+    process.env.PROGRAMFILES,
+    process.env['PROGRAMFILES(X86)'],
+    path.join(process.env.LOCALAPPDATA || '', 'Programs'),
+    path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps'),
+  ].filter(Boolean);
+
+  for (const root of possibleRoots) {
+    if (!fs.existsSync(root)) continue;
+
+    walkLimited(root, 3, (fullPath, fileName) => {
+      if (!fileName.toLowerCase().endsWith('.exe')) return;
+      const stat = safeStat(fullPath);
+      if (!stat || !stat.isFile()) return;
+      if (stat.size === 0) return;
+
+      const name = path.basename(fileName, '.exe');
+      const record = createAppRecord({
+        name,
+        launchType: 'exe',
+        launchTarget: fullPath,
+        source: 'exe-scan',
+      });
+      mergeAppRecord(appMap, record);
+      addAliasIndex(appMap, aliasIndex, record);
+    });
+  }
+}
+
+function buildInstalledAppIndex() {
+  if (APP_INDEX_CACHE.built) return APP_INDEX_CACHE.apps;
+
+  const appMap = new Map();
+  const aliasIndex = new Map();
+
+  const builtinApps = [
+    createAppRecord({ name: 'YouTube', launchType: 'url', launchTarget: 'https://www.youtube.com', source: 'builtin', aliases: ['유튜브', '유투브'] }),
+    createAppRecord({ name: 'Google', launchType: 'url', launchTarget: 'https://www.google.com', source: 'builtin', aliases: ['구글'] }),
+    createAppRecord({ name: 'Gmail', launchType: 'url', launchTarget: 'https://mail.google.com', source: 'builtin', aliases: ['지메일', '메일'] }),
+    createAppRecord({ name: 'ChatGPT', launchType: 'url', launchTarget: 'https://chatgpt.com', source: 'builtin', aliases: ['챗지피티', '챗gpt'] }),
+  ];
+
+  for (const record of builtinApps) {
+    mergeAppRecord(appMap, record);
+    addAliasIndex(appMap, aliasIndex, record);
+  }
+
+  scanStartMenuApps(appMap, aliasIndex);
+  scanRegistryApps(appMap, aliasIndex);
+  scanExecutableApps(appMap, aliasIndex);
+
+  const records = [...appMap.values()]
+    .filter((item) => item.name)
+    .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+
+  APP_INDEX_CACHE.apps = records;
+  APP_INDEX_CACHE.aliasIndex = aliasIndex;
+  APP_INDEX_CACHE.built = true;
+  return records;
+}
+
+function scoreAppMatch(query, record) {
+  const q = normalizeAppKey(query);
+  if (!q) return 0;
+
+  const names = [record.name, ...(record.aliases || [])].filter(Boolean);
+  let best = 0;
+  for (const name of names) {
+    const n = normalizeAppKey(name);
+    if (!n) continue;
+    if (n === q) return 100;
+    if (n.includes(q)) best = Math.max(best, 90);
+    else if (q.includes(n)) best = Math.max(best, 80);
+    else {
+      const compactN = n.replace(/\s+/g, '');
+      const compactQ = q.replace(/\s+/g, '');
+      if (compactN === compactQ) best = Math.max(best, 95);
+      else if (compactN.includes(compactQ)) best = Math.max(best, 85);
+      else if (compactQ.includes(compactN)) best = Math.max(best, 75);
+    }
+  }
+
+  return best;
+}
+
+function findBestAppMatch(query) {
+  const apps = buildInstalledAppIndex();
+  let best = null;
+  let bestScore = 0;
+
+  for (const record of apps) {
+    const score = scoreAppMatch(query, record);
+    if (score > bestScore) {
+      bestScore = score;
+      best = record;
+    }
+  }
+
+  return best && bestScore >= 70 ? best : null;
+}
+
+async function launchAppRecord(record) {
+  if (!record) {
+    return { success: false, message: '앱을 찾을 수 없습니다.' };
+  }
+
+  try {
+    const target = stripTrailingArgs(record.launchTarget);
+
+    if (!target) {
+      return { success: false, message: `${record.name}의 실행 경로를 찾지 못했어요.` };
+    }
+
+    if (record.launchType === 'url' || isUrlLike(target)) {
+      await shell.openExternal(target);
+      return { success: true, opened: target, name: record.name };
+    }
+
+    if (record.launchType === 'shortcut') {
+      const cmd = spawn('cmd', ['/c', 'start', '""', target], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      cmd.unref();
+      return { success: true, opened: target, name: record.name };
+    }
+
+    const { file, args } = splitCommandAndArgs(target);
+    const launchFile = target.toLowerCase().endsWith('.exe') ? target : file;
+    const launchArgs = target.toLowerCase().endsWith('.exe') ? [] : args;
+    const child = spawn(launchFile, launchArgs, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    return { success: true, opened: launchFile, name: record.name };
+  } catch (error) {
+    return { success: false, message: error && error.message ? error.message : '앱 실행에 실패했어요.' };
+  }
+}
+
 function isWindowVisible(win) {
   return Boolean(win && !win.isDestroyed() && win.isVisible());
 }
