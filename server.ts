@@ -65,6 +65,17 @@ app.post("/api/chat", async (req, res) => {
           {
             functionDeclarations: [
               {
+                name: "launch_app",
+                description: "Launch an installed app, shortcut, or website for the user.",
+                parameters: {
+                  type: Type.OBJECT,
+                  properties: {
+                    app: { type: Type.STRING, description: "The app or website name to open. Use a natural name like YouTube, KakaoTalk, VS Code, Discord, Chrome, or any installed app name." },
+                  },
+                  required: ["app"],
+                },
+              },
+              {
                 name: "add_calendar_event",
                 description: "Add a new event to the user's calendar/schedule.",
                 parameters: {
@@ -114,6 +125,10 @@ app.post("/api/chat", async (req, res) => {
     const response = result;
     const textPart = response.text || "";
     const functionCalls = response.functionCalls || [];
+    const launchApps = functionCalls
+      .filter((p: any) => p.name === "launch_app")
+      .map((p: any) => String(p.args?.app || "").trim())
+      .filter(Boolean);
     
     res.json({ 
       text: textPart || (functionCalls.length ? "일정을 확인하고 처리해둘게! 📝" : "이해했어요! ✨"), 
