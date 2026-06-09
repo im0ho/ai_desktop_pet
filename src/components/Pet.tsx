@@ -11,7 +11,7 @@ interface PetProps {
   status: PetStatus;
   isTalking: boolean;
   lastMessage: string;
-  onPlay: () => void;
+  onDoubleClickPet?: () => void;
   showChatInput?: boolean;
   onToggleChat: () => void;
   showCalendar?: boolean;
@@ -29,7 +29,7 @@ interface PetProps {
 }
 
 export const Pet: React.FC<PetProps> = ({ 
-  status, isTalking, lastMessage, onPlay,
+  status, isTalking, lastMessage, onDoubleClickPet,
   showChatInput, onToggleChat, showCalendar, onToggleCalendar, onSendMessage, isLoading, messages, dragConstraints,
   showStatus = false, onToggleStatus, petScale = 100, petHue = 250
 }) => {
@@ -64,11 +64,13 @@ export const Pet: React.FC<PetProps> = ({
 
         {/* Character Visual */}
         <div 
+          onDoubleClick={onDoubleClickPet}
           className="relative pointer-events-auto cursor-grab active:cursor-grabbing transition-all duration-300"
           style={{ 
             width: `${192 * (petScale / 100)}px`, 
             height: `${192 * (petScale / 100)}px` 
           }}
+          title="더블클릭으로 쓰다듬어 주기"
         >
           <div 
             className="absolute bottom-0 left-1/2 -translate-x-1/2 origin-bottom transition-all duration-300"
@@ -150,15 +152,6 @@ export const Pet: React.FC<PetProps> = ({
           }}
           onPointerDown={(e) => e.stopPropagation()} // Prevent parent drag when clicking buttons
         >
-          {/* PLAY */}
-          <button 
-            onClick={onPlay}
-            className="w-12 h-12 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg hover:scale-110 active:scale-95 transition-transform cursor-pointer"
-            title="놀아 주기"
-          >
-            <Heart className="w-6 h-6" />
-          </button>
-
           {/* CHAT TOGGLE */}
           <button 
             onClick={onToggleChat}
@@ -198,9 +191,13 @@ export const Pet: React.FC<PetProps> = ({
           <button 
             onClick={onToggleStatus}
             className="w-12 h-12 rounded-full bg-amber-500 text-white flex items-center justify-center shadow-lg hover:scale-110 active:scale-95 transition-transform cursor-pointer"
-            title="상태창 열기"
+            title={showStatus ? "상태창 닫기" : "상태창 열기"}
           >
-            <Sparkles className="w-6 h-6" />
+            {showStatus ? (
+              <X className="w-6 h-6" />
+            ) : (
+              <Sparkles className="w-6 h-6" />
+            )}
           </button>
         </div>
 

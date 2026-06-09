@@ -76,6 +76,7 @@ export const Calendar: React.FC<CalendarProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [todoTab, setTodoTab] = useState<'today' | 'daily' | 'weekly' | 'monthly'>('today');
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
   const [formTitle, setFormTitle] = useState('');
@@ -119,12 +120,13 @@ export const Calendar: React.FC<CalendarProps> = ({
 
   return (
     <div 
-      onMouseEnter={() => ipcRenderer?.send('calendar-hover')}
-      onMouseLeave={() => ipcRenderer?.send('calendar-leave')}
+      onMouseEnter={() => ipcRenderer?.send('pet-hover')}
+      onMouseLeave={() => ipcRenderer?.send('pet-leave')}
       className="flex items-start gap-4 pointer-events-auto"
     >
       <div className={cn(
-        "backdrop-blur-md border rounded-3xl p-6 shadow-2xl w-[350px] shrink-0 pointer-events-auto group/calendar relative transition-all duration-500",
+        "backdrop-blur-md border rounded-3xl p-6 shadow-2xl w-[350px] shrink-0 pointer-events-auto group/calendar relative transition-all duration-500 select-none",
+        isLocked ? "cursor-default" : "cursor-grab active:cursor-grabbing",
         isDarkMode 
           ? "bg-[#141416]/95 text-white border-white/5 shadow-black/80" 
           : "bg-white/90 text-black border-black/10"
@@ -352,8 +354,7 @@ export const Calendar: React.FC<CalendarProps> = ({
 
       {/* 최상단 행: 연월, 잠금, 설정, x표시 */}
       <div 
-        onPointerDown={(e) => dragControls?.start(e)}
-        className="flex items-center justify-between mb-4 animate-fade-in cursor-grab active:cursor-grabbing select-none"
+        className="flex items-center justify-between mb-4 animate-fade-in select-none"
       >
         <div className="flex items-center gap-2">
           <h2 className={cn("text-[17px] font-black flex items-center gap-1.5", isDarkMode ? "text-white" : "text-zinc-900")}>
@@ -416,25 +417,33 @@ export const Calendar: React.FC<CalendarProps> = ({
         </div>
       </div>
 
-      <div onPointerDown={(e) => e.stopPropagation()} className="flex flex-col flex-1">
+      <div className="flex flex-col flex-1">
 
       {/* 그 아랫줄: 좌우 화살표로 개월 변경 */}
       <div className={cn(
         "flex items-center justify-center gap-8 mb-4 rounded-xl py-2 px-4 transition-colors duration-300",
         isDarkMode ? "bg-white/5" : "bg-black/5"
       )}>
-        <button onClick={prevMonth} className={cn(
-          "p-1.5 rounded-lg transition-colors group flex items-center gap-1.5 cursor-pointer",
-          isDarkMode ? "hover:bg-white/10 text-zinc-300 hover:text-white" : "hover:bg-white text-black"
-        )}>
+        <button 
+          onClick={prevMonth} 
+          onPointerDown={(e) => e.stopPropagation()}
+          className={cn(
+            "p-1.5 rounded-lg transition-colors group flex items-center gap-1.5 cursor-pointer",
+            isDarkMode ? "hover:bg-white/10 text-zinc-300 hover:text-white" : "hover:bg-white text-black"
+          )}
+        >
           <ChevronLeft className="w-3.5 h-3.5" />
           <span className="text-xs font-bold select-none">이전달</span>
         </button>
         <span className={cn("text-[11px] font-black uppercase tracking-widest select-none", isDarkMode ? "text-zinc-500" : "text-black/40")}>Month</span>
-        <button onClick={nextMonth} className={cn(
-          "p-1.5 rounded-lg transition-colors group flex items-center gap-1.5 cursor-pointer",
-          isDarkMode ? "hover:bg-white/10 text-zinc-300 hover:text-white" : "hover:bg-white text-black"
-        )}>
+        <button 
+          onClick={nextMonth} 
+          onPointerDown={(e) => e.stopPropagation()}
+          className={cn(
+            "p-1.5 rounded-lg transition-colors group flex items-center gap-1.5 cursor-pointer",
+            isDarkMode ? "hover:bg-white/10 text-zinc-300 hover:text-white" : "hover:bg-white text-black"
+          )}
+        >
           <span className="text-xs font-bold select-none">다음달</span>
           <ChevronRight className="w-3.5 h-3.5" />
         </button>
@@ -467,11 +476,14 @@ export const Calendar: React.FC<CalendarProps> = ({
         {days.map((day) => {
           const hasEvent = events.some((e) => isSameDay(new Date(e.date), day));
           const isToday = isSameDay(day, new Date());
+          const isSelected = selectedDay ? isSameDay(day, selectedDay) : false;
           const dayOfWeek = day.getDay();
           
           let dateTextColorClass = '';
           if (isToday) {
             dateTextColorClass = isDarkMode ? 'text-zinc-950 font-black' : 'text-white font-black';
+          } else if (isSelected) {
+            dateTextColorClass = isDarkMode ? 'text-indigo-300 font-black' : 'text-indigo-800 font-black';
           } else if (dayOfWeek === 0) {
             dateTextColorClass = 'text-red-500 font-black'; // Sunday Red in both modes
           } else if (dayOfWeek === 6) {
@@ -485,18 +497,19 @@ export const Calendar: React.FC<CalendarProps> = ({
               key={day.toString()}
               onClick={() => {
                 setSelectedDay(day);
-                setModalMode('add');
-                setFormTitle('');
-                setFormDesc('');
-                setFormTime('12:00');
-                setFormAlertEnabled(true);
-                setIsModalOpen(true);
+                setShowTodo(true);
+                setTodoTab('today');
+                localStorage.setItem('moni_calendar_show_todo', 'true');
               }}
+              onPointerDown={(e) => e.stopPropagation()}
               className={cn(
-                "aspect-square relative flex flex-col items-center justify-center rounded-xl transition-all group cursor-pointer",
+                "aspect-square relative flex flex-col items-center justify-center rounded-xl transition-all group cursor-pointer border",
                 isToday 
-                  ? (isDarkMode ? "bg-white text-zinc-950 font-black" : "bg-black text-white font-black") 
-                  : (isDarkMode ? "hover:bg-white/10" : "hover:bg-black/5")
+                  ? (isDarkMode ? "bg-white text-zinc-950 font-black border-transparent" : "bg-black text-white font-black border-transparent") 
+                  : isSelected
+                    ? (isDarkMode ? "bg-indigo-950/40 border-indigo-500/50" : "bg-indigo-50 border-indigo-300/80 shadow-sm")
+                    : "border-transparent " + (isDarkMode ? "hover:bg-white/10" : "hover:bg-black/5"),
+                isSelected && isToday && (isDarkMode ? "ring-2 ring-indigo-400" : "ring-2 ring-indigo-600")
               )}
             >
               <span className={cn("text-sm font-bold", dateTextColorClass)}>
@@ -507,12 +520,11 @@ export const Calendar: React.FC<CalendarProps> = ({
                   "absolute bottom-1.5 w-1.5 h-1.5 rounded-full transition-colors", 
                   isToday 
                     ? (isDarkMode ? "bg-zinc-950" : "bg-white") 
-                    : "bg-indigo-500"
+                    : isSelected
+                      ? (isDarkMode ? "bg-indigo-400" : "bg-indigo-600")
+                      : "bg-indigo-500"
                 )} />
               )}
-              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 flex items-center justify-center bg-black/5 dark:bg-white/5 rounded-xl transition-opacity pointer-events-none">
-                <Plus className={cn("w-4 h-4", isDarkMode ? "text-zinc-300" : "text-zinc-700")} />
-              </div>
             </button>
           );
         })}
@@ -526,6 +538,7 @@ export const Calendar: React.FC<CalendarProps> = ({
           <p className={cn("text-[13px] font-black uppercase tracking-widest", isDarkMode ? "text-zinc-400" : "text-black/60")}>Upcoming Events</p>
           <button 
             onClick={() => setIsEventsExpanded(!isEventsExpanded)}
+            onPointerDown={(e) => e.stopPropagation()}
             className={cn(
               "p-1.5 rounded-lg transition-colors flex items-center justify-center cursor-pointer",
               isDarkMode ? "hover:bg-white/10 text-zinc-400 hover:text-white" : "hover:bg-black/5 text-black/60 hover:text-black"
@@ -551,15 +564,39 @@ export const Calendar: React.FC<CalendarProps> = ({
               transition={{ duration: 0.25, ease: "easeInOut" }}
               className="overflow-hidden"
             >
-              <div className="h-44 overflow-y-auto pr-1 scrollbar-hide flex flex-col gap-3">
+              <div 
+                onPointerDown={(e) => e.stopPropagation()}
+                className="h-44 overflow-y-auto pr-1 scrollbar-hide flex flex-col gap-3"
+              >
                 {(() => {
+                  const now = new Date();
                   const filteredEvents = events
-                    .filter(e => isSameMonth(new Date(e.date), currentMonth))
+                    .filter(e => {
+                      const eventDate = new Date(e.date);
+                      if (e.time) {
+                        const [hours, minutes] = e.time.split(':').map(Number);
+                        eventDate.setHours(hours, minutes, 0, 0);
+                      } else {
+                        eventDate.setHours(23, 59, 59, 999);
+                      }
+                      return eventDate.getTime() >= now.getTime();
+                    })
                     .sort((a, b) => {
-                      const dateA = new Date(a.date).getTime();
-                      const dateB = new Date(b.date).getTime();
-                      if (dateA !== dateB) return dateA - dateB;
-                      return (a.time || '').localeCompare(b.time || '');
+                      const dateA = new Date(a.date);
+                      if (a.time) {
+                        const [h, m] = a.time.split(':').map(Number);
+                        dateA.setHours(h, m, 0, 0);
+                      } else {
+                        dateA.setHours(0, 0, 0, 0);
+                      }
+                      const dateB = new Date(b.date);
+                      if (b.time) {
+                        const [h, m] = b.time.split(':').map(Number);
+                        dateB.setHours(h, m, 0, 0);
+                      } else {
+                        dateB.setHours(0, 0, 0, 0);
+                      }
+                      return dateA.getTime() - dateB.getTime();
                     });
 
                   if (filteredEvents.length === 0) {
@@ -568,7 +605,7 @@ export const Calendar: React.FC<CalendarProps> = ({
                         "text-center border border-dashed select-none animate-fade-in flex flex-col justify-center flex-1 h-full py-6 px-4 min-h-[100px] rounded-2xl",
                         isDarkMode ? "bg-white/5 border-white/5" : "bg-black/5 border-black/10"
                       )}>
-                        <p className={cn("text-[13px] font-semibold", isDarkMode ? "text-zinc-500" : "text-black/40")}>이번 달 등록된 일정이 없습니다. ✨</p>
+                        <p className={cn("text-[13px] font-semibold", isDarkMode ? "text-zinc-500" : "text-black/40")}>등록된 다가오는 일정이 없습니다. ✨</p>
                       </div>
                     );
                   }
@@ -576,6 +613,7 @@ export const Calendar: React.FC<CalendarProps> = ({
                   return filteredEvents.map((event) => (
                     <div 
                       key={event.id} 
+                      onPointerDown={(e) => e.stopPropagation()}
                       className={cn(
                         "border rounded-2xl p-4 transition-all cursor-pointer group relative hover:shadow-md shrink-0",
                         isDarkMode 
@@ -680,6 +718,21 @@ export const Calendar: React.FC<CalendarProps> = ({
             isLocked={isLocked} 
             isDarkMode={isDarkMode}
             todoResetWarnMinutes={todoResetWarnMinutes}
+            selectedDate={selectedDay || new Date()}
+            activeTab={todoTab}
+            onActiveTabChange={setTodoTab}
+            onAddEventClick={() => {
+              if (!selectedDay) {
+                setSelectedDay(new Date());
+              }
+              setModalMode('add');
+              setFormTitle('');
+              setFormDesc('');
+              setFormTime('12:00');
+              setFormAlertEnabled(true);
+              setIsModalOpen(true);
+            }}
+            onRemoveEvent={onRemoveEvent}
           />
         </motion.div>
       )}

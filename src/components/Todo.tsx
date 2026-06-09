@@ -3,7 +3,7 @@ import { Plus, Trash2, CheckCircle, Circle, Clock, Calendar as CalendarIcon, Che
 import { motion, AnimatePresence } from 'motion/react';
 import { CalendarEvent } from '../types';
 import { cn } from '../lib/utils';
-import { isSameDay } from 'date-fns';
+import { isSameDay, format } from 'date-fns';
 
 interface TodoProps {
   events: CalendarEvent[];
@@ -11,6 +11,11 @@ interface TodoProps {
   isLocked?: boolean;
   isDarkMode: boolean;
   todoResetWarnMinutes: number;
+  selectedDate?: Date;
+  onAddEventClick?: () => void;
+  onRemoveEvent?: (id: string) => void;
+  activeTab?: 'today' | 'daily' | 'weekly' | 'monthly';
+  onActiveTabChange?: (tab: 'today' | 'daily' | 'weekly' | 'monthly') => void;
 }
 
 interface CustomTodo {
@@ -43,9 +48,22 @@ export const Todo: React.FC<TodoProps> = ({
   textColor = '#000000', 
   isLocked,
   isDarkMode,
-  todoResetWarnMinutes
+  todoResetWarnMinutes,
+  selectedDate,
+  onAddEventClick,
+  onRemoveEvent,
+  activeTab: activeTabProp,
+  onActiveTabChange
 }) => {
-  const [activeTab, setActiveTab] = useState<'today' | 'daily' | 'weekly' | 'monthly'>('today');
+  const [internalActiveTab, setInternalActiveTab] = useState<'today' | 'daily' | 'weekly' | 'monthly'>('today');
+  const activeTab = activeTabProp !== undefined ? activeTabProp : internalActiveTab;
+  const setActiveTab = (tab: 'today' | 'daily' | 'weekly' | 'monthly') => {
+    if (onActiveTabChange) {
+      onActiveTabChange(tab);
+    } else {
+      setInternalActiveTab(tab);
+    }
+  };
   const [customTodos, setCustomTodos] = useState<CustomTodo[]>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('moni_custom_todos');
@@ -54,7 +72,7 @@ export const Todo: React.FC<TodoProps> = ({
           return JSON.parse(saved).map((todo:any) => ({
             ...todo,
             rewardClaimed: todo.rewardClaimed ?? false,
-}));
+          }));
         } catch (e) {}
       }
     }
@@ -293,7 +311,6 @@ export const Todo: React.FC<TodoProps> = ({
     const updated = todos.map((todo) => {
 
       const lastReset = todo.lastResetTimestamp || todo.createdAt;
-      const wasCompleted = todo.completed;
       let targetTime = 0;
       const config = todo.resetConfig || {
         dailyHour: 9,
@@ -384,10 +401,10 @@ export const Todo: React.FC<TodoProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Filter events scheduled for today
+  // Filter events scheduled for today or selected date
   const todayEvents = events.filter((event) => {
     try {
-      return isSameDay(new Date(event.date), new Date());
+      return isSameDay(new Date(event.date), selectedDate || new Date());
     } catch (e) {
       return false;
     }
@@ -398,52 +415,52 @@ export const Todo: React.FC<TodoProps> = ({
     if (e) e.preventDefault();
     if (!inputValue.trim() || activeTab === 'today') return;
 
-  const newTodo: CustomTodo = {
-    id: crypto.randomUUID(),
-    text: inputValue.trim(),
-    completed: false,
-    rewardClaimed: false,
-    category: activeTab,
-    createdAt: Date.now(),
-    lastResetTimestamp: Date.now(),
-    resetConfig: {
-      dailyHour: activeTab === 'daily' ? dailyHour : undefined,
-      weeklyDay: activeTab === 'weekly' ? weeklyDay : undefined,
-      monthlyDate: activeTab === 'monthly' ? monthlyDate : undefined,
-  }
-};
+    const newTodo: CustomTodo = {
+      id: crypto.randomUUID(),
+      text: inputValue.trim(),
+      completed: false,
+      rewardClaimed: false,
+      category: activeTab,
+      createdAt: Date.now(),
+      lastResetTimestamp: Date.now(),
+      resetConfig: {
+        dailyHour: activeTab === 'daily' ? dailyHour : undefined,
+        weeklyDay: activeTab === 'weekly' ? weeklyDay : undefined,
+        monthlyDate: activeTab === 'monthly' ? monthlyDate : undefined,
+      }
+    };
 
     setCustomTodos((prev) => [newTodo, ...prev]);
     setInputValue('');
   };
 
   // Toggle custom todo checked status
-const toggleTodo = (id: string) => {
-  setCustomTodos((prev) =>
-    prev.map((todo) => {
-      if (todo.id !== id) return todo;
+  const toggleTodo = (id: string) => {
+    setCustomTodos((prev) =>
+      prev.map((todo) => {
+        if (todo.id !== id) return todo;
 
-      const next = !todo.completed;
+        const next = !todo.completed;
 
-      // 처음 완료했을 때만 경험치 지급
-      if (next && !todo.rewardClaimed) {
-        window.dispatchEvent(new Event('moni-todo-complete'));
+        // 처음 완료했을 때만 경험치 지급
+        if (next && !todo.rewardClaimed) {
+          window.dispatchEvent(new Event('moni-todo-complete'));
 
+          return {
+            ...todo,
+            completed: true,
+            rewardClaimed: true,
+          };
+        }
+
+        // 체크 해제
         return {
           ...todo,
-          completed: true,
-          rewardClaimed: true,
+          completed: next,
         };
-      }
-
-      // 체크 해제
-      return {
-        ...todo,
-        completed: next,
-      };
-    })
-  );
-};
+      })
+    );
+  };
 
   // Delete custom todo
   const deleteTodo = (id: string) => {
@@ -548,23 +565,44 @@ const toggleTodo = (id: string) => {
       </div>
 
       {/* Main Content Title */}
-      <div className="mb-4">
-        <h3 className="text-[17px] font-black flex items-center gap-1.5 capitalize" style={{ color: isDarkMode ? '#ffffff' : textColor }}>
-          {activeTab === 'today' ? (
-            <>
-              <Clock className={cn("w-4.5 h-4.5 animate-pulse", isDarkMode ? "text-indigo-400" : "text-indigo-600")} />
-              오늘의 알림 일정
-            </>
-          ) : (
-            <>
-              <CalendarIcon className="w-4.5 h-4.5" />
-              {activeTab} 계획표
-            </>
-          )}
-        </h3>
-        <p className={cn("text-[11px] font-bold uppercase tracking-wider mt-0.5", isDarkMode ? "text-zinc-400" : "text-black/40")}>
-          {activeTab === 'today' ? '자동 동기화 알람 일정' : '나만의 맞춤 할 일 목록'}
-        </p>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h3 className="text-[17px] font-black flex items-center gap-1.5 capitalize" style={{ color: isDarkMode ? '#ffffff' : textColor }}>
+            {activeTab === 'today' ? (
+              <>
+                <Clock className={cn("w-4.5 h-4.5 animate-pulse", isDarkMode ? "text-indigo-400" : "text-indigo-600")} />
+                {isSameDay(selectedDate || new Date(), new Date()) ? "오늘의 알림 일정" : `${format(selectedDate || new Date(), 'M/d')} 알림 일정`}
+              </>
+            ) : (
+              <>
+                <CalendarIcon className="w-4.5 h-4.5" />
+                {activeTab} 계획표
+              </>
+            )}
+          </h3>
+          <p className={cn("text-[11px] font-bold uppercase tracking-wider mt-0.5", isDarkMode ? "text-zinc-400" : "text-black/40")}>
+            {activeTab === 'today' ? '자동 동기화 알람 일정' : '나만의 맞춤 할 일 목록'}
+          </p>
+        </div>
+
+        {activeTab === 'today' && onAddEventClick && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddEventClick();
+            }}
+            className={cn(
+              "px-2.5 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 flex items-center gap-1 cursor-pointer shadow-sm border shrink-0",
+              isDarkMode 
+                ? "bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-500" 
+                : "bg-indigo-50 border-indigo-100 text-indigo-700 hover:bg-indigo-100/80"
+            )}
+            title="일정 추가"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>추가</span>
+          </button>
+        )}
       </div>
 
       {/* To-Do Quick Input Bar (Disabled for automated 'Today' tab) */}
@@ -684,7 +722,9 @@ const toggleTodo = (id: string) => {
             >
               {activeTab === 'today' ? (
                 <div className="space-y-1">
-                  <p className={cn("text-[13px] font-bold", isDarkMode ? "text-zinc-300" : "text-black/40")}>오늘 등록된 알림 일정이 없습니다.</p>
+                  <p className={cn("text-[13px] font-bold", isDarkMode ? "text-zinc-300" : "text-black/40")}>
+                    {isSameDay(selectedDate || new Date(), new Date()) ? "오늘" : "선택한 날에"} 등록된 알림 일정이 없습니다.
+                  </p>
                   <p className={cn("text-xs", isDarkMode ? "text-zinc-500" : "text-black/30")}>캘린더 일정을 추가해 보세요! ✨</p>
                 </div>
               ) : (
@@ -708,44 +748,64 @@ const toggleTodo = (id: string) => {
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.2 }}
                     className={cn(
-                      "flex items-center gap-3 p-3 border rounded-2xl transition-all cursor-pointer group",
+                      "flex items-center justify-between gap-3 p-3 border rounded-2xl transition-all group",
                       isDarkMode 
                         ? (isCompleted ? "bg-[#18181c] border-white/5 opacity-50" : "bg-indigo-950/20 border-indigo-900/50 hover:bg-indigo-950/30")
                         : (isCompleted ? "bg-indigo-50/30 border-indigo-100 opacity-65" : "bg-indigo-50/50 border-indigo-100 hover:bg-indigo-50")
                     )}
-                    onClick={() => toggleTodayEvent(event.id)}
                   >
-                    <button className={cn(isDarkMode ? "text-indigo-400" : "text-indigo-600", "focus:outline-none shrink-0")} title={isCompleted ? "미완료로 표시" : "완료로 표시"}>
-                      {isCompleted ? (
-                        <CheckCircle className={cn("w-5 h-5", isDarkMode ? "fill-indigo-400 text-zinc-950" : "fill-indigo-600 text-white")} />
-                      ) : (
-                        <Circle className="w-5 h-5 hover:scale-110 transition-transform" />
-                      )}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <p className={cn(
-                        "text-[13px] font-black truncate transition-all",
-                        isCompleted 
-                          ? (isDarkMode ? "line-through text-zinc-600" : "line-through text-black/40") 
-                          : (isDarkMode ? "text-zinc-200" : "text-black")
-                      )}>
-                        {event.title}
-                      </p>
-                      {event.time && (
-                        <span className={cn(
-                          "inline-flex items-center gap-1.5 text-[10px] font-black mt-0.5 uppercase px-1.5 py-0.5 rounded-md",
-                          event.alertEnabled === false
-                            ? (isDarkMode ? "text-zinc-500 bg-white/5" : "text-black/40 bg-black/5")
-                            : (isDarkMode ? "text-indigo-300 bg-indigo-950/70" : "text-indigo-600/80 bg-indigo-50")
+                    <div 
+                      className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+                      onClick={() => toggleTodayEvent(event.id)}
+                    >
+                      <button className={cn(isDarkMode ? "text-indigo-400" : "text-indigo-600", "focus:outline-none shrink-0")} title={isCompleted ? "미완료로 표시" : "완료로 표시"}>
+                        {isCompleted ? (
+                          <CheckCircle className={cn("w-5 h-5", isDarkMode ? "fill-indigo-400 text-zinc-950" : "fill-indigo-600 text-white")} />
+                        ) : (
+                          <Circle className="w-5 h-5 hover:scale-110 transition-transform" />
+                        )}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn(
+                          "text-[13px] font-black truncate transition-all",
+                          isCompleted 
+                            ? (isDarkMode ? "line-through text-zinc-600" : "line-through text-black/40") 
+                            : (isDarkMode ? "text-zinc-200" : "text-black")
                         )}>
-                          <Clock className="w-2.5 h-2.5" />
-                          {event.time}
-                          {event.alertEnabled === false && (
-                            <span className="text-[9px] font-bold">🔔 OFF</span>
-                          )}
-                        </span>
-                      )}
+                          {event.title}
+                        </p>
+                        {event.time && (
+                          <span className={cn(
+                            "inline-flex items-center gap-1.5 text-[10px] font-black mt-0.5 uppercase px-1.5 py-0.5 rounded-md",
+                            event.alertEnabled === false
+                              ? (isDarkMode ? "text-zinc-500 bg-white/5" : "text-black/40 bg-black/5")
+                              : (isDarkMode ? "text-indigo-300 bg-indigo-950/70" : "text-indigo-600/80 bg-indigo-50")
+                          )}>
+                            <Clock className="w-2.5 h-2.5" />
+                            {event.time}
+                            {event.alertEnabled === false && (
+                              <span className="text-[9px] font-bold">🔔 OFF</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
                     </div>
+
+                    {onRemoveEvent && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveEvent(event.id);
+                        }}
+                        className={cn(
+                          "p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shrink-0",
+                          isDarkMode ? "text-zinc-500 hover:text-red-400" : "text-black/30 hover:text-red-500"
+                        )}
+                        title="지우기"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </motion.div>
                 );
               } else {

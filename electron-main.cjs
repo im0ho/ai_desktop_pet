@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, ipcMain, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Menu, Tray, nativeImage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const isDev = !app.isPackaged;
@@ -33,8 +33,9 @@ try {
 
 let petWindow;
 let serverProcess = null;
-let calendarWindow;
+let calendarWindow = null;
 let tray = null;
+let isCalendarVisible = false;
 
 const APP_INDEX_CACHE = {
   built: false,
@@ -285,7 +286,7 @@ function scanStartMenuApps(appMap, aliasIndex) {
             launchTarget = urlMatch[1].trim();
           }
         } catch {
-          // Fallback to the .url file path if parsing fails.
+          // Fallback if parsing fails.
         }
       }
 
@@ -519,13 +520,8 @@ function togglePetWindow() {
 }
 
 function toggleCalendarWindow() {
-  if (!calendarWindow || calendarWindow.isDestroyed()) return;
-  if (isWindowVisible(calendarWindow)) {
-    calendarWindow.hide();
-  } else {
-    calendarWindow.show();
-    calendarWindow.focus();
-    calendarWindow.setIgnoreMouseEvents(true, { forward: true });
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send('toggle-calendar-external');
   }
 }
 
@@ -547,7 +543,7 @@ function updateTrayMenu() {
       },
     },
     {
-      label: isWindowVisible(calendarWindow) ? 'Hide Calendar' : 'Show Calendar',
+      label: isCalendarVisible ? 'Hide Calendar' : 'Show Calendar',
       click: () => {
         toggleCalendarWindow();
         updateTrayMenu();
@@ -744,40 +740,31 @@ ipcMain.on('pet-leave', () => {
   }
 });
 
-ipcMain.on('calendar-hover', () => {
-  if (calendarWindow) {
-    calendarWindow.setIgnoreMouseEvents(false);
+ipcMain.on('calendar-state-changed', (event, visible) => {
+  isCalendarVisible = visible;
+  updateTrayMenu();
+});
+
+// IPC Handler to return a list of parsed installed apps for React
+ipcMain.handle('get-installed-apps', async () => {
+  try {
+    return buildInstalledAppIndex();
+  } catch (error) {
+    console.error('Error listing installed apps:', error);
+    return [];
   }
 });
 
-ipcMain.on('calendar-leave', () => {
-  if (calendarWindow) {
-    calendarWindow.setIgnoreMouseEvents(true, { forward: true });
-  }
-});
-
-ipcMain.on('calendar-show', () => {
-  if (calendarWindow && !calendarWindow.isDestroyed()) {
-    calendarWindow.show();
-    calendarWindow.focus();
-    updateTrayMenu();
-  }
-});
-
-ipcMain.on('calendar-hide', () => {
-  if (calendarWindow && !calendarWindow.isDestroyed()) {
-    calendarWindow.hide();
-    updateTrayMenu();
-  }
-});
-
-ipcMain.on('calendar-close', () => {
-  if (calendarWindow && !calendarWindow.isDestroyed()) {
-    calendarWindow.hide();
-    updateTrayMenu();
-  }
-  if (petWindow && !petWindow.isDestroyed()) {
-    petWindow.webContents.send('calendar-closed-external');
+// IPC Handler to launch an app by name from React
+ipcMain.handle('launch-installed-app', async (event, appName) => {
+  try {
+    const record = findBestAppMatch(appName);
+    if (!record) {
+      return { success: false, message: `"${appName}" 앱을 찾을 수 없었습니다.` };
+    }
+    return await launchAppRecord(record);
+  } catch (error) {
+    return { success: false, message: error && error.message ? error.message : '실행오류' };
   }
 });
 
@@ -807,13 +794,6 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('Failed to create main window:', err);
     logError('Failed to create main window', err);
-  }
-
-  try {
-    createCalendarWindow();
-  } catch (err) {
-    console.error('Failed to create calendar window:', err);
-    logError('Failed to create calendar window', err);
   }
 
   try {

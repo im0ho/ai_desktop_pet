@@ -70,7 +70,12 @@ export default function App() {
   });
 
   const [isTalking, setIsTalking] = useState(false);
-  const [isCalendarLocked, setIsCalendarLocked] = useState(false);
+  const [isCalendarLocked, setIsCalendarLocked] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('moni_calendar_locked') === 'true';
+    }
+    return false;
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showSettings, setShowSettings] = useState(false);
@@ -245,68 +250,108 @@ export default function App() {
     localStorage.setItem('moni_chat_messages', JSON.stringify(messages));
   }, [messages]);
 
-  
-
   useEffect(() => { localStorage.setItem('moni_pet_exp', String(petExp)); }, [petExp]);
   useEffect(() => { localStorage.setItem('moni_pet_favorability', String(petFavorability)); }, [petFavorability]);
 
   useEffect(() => {
+    localStorage.setItem('moni_pet_visible', String(isPetVisible));
+    if (!isPetVisible) {
+      setShowCalendarOverlay(false);
+      setShowStatusOverlay(false);
+    }
+  }, [isPetVisible]);
+
+  useEffect(() => {
+    localStorage.setItem('moni_calendar_locked', String(isCalendarLocked));
+  }, [isCalendarLocked]);
+
+  useEffect(() => {
     const getLevelRequirement = (level:number) => 50 + level * 50;
 
-const onReward = () => {
-  const now = Date.now();
-  if (now - rewardLockRef.current < 300) return;
-  rewardLockRef.current = now;
+    const onReward = () => {
+      const now = Date.now();
+      if (now - rewardLockRef.current < 300) return;
+      rewardLockRef.current = now;
 
-  setPetFavorability(prev => {
-    const affection = Math.min(100, prev + 2);
-    const bonus = affection >= 100 ? 0.5 : affection >= 60 ? 0.3 : affection >= 30 ? 0.1 : 0;
-    const gain = Math.round(5 * (1 + bonus));
+      setPetFavorability(prev => {
+        const nextAffection = Math.min(100, prev + 2);
+        const bonus = nextAffection >= 100 ? 0.5 : nextAffection >= 60 ? 0.3 : nextAffection >= 30 ? 0.1 : 0;
+        const gain = Math.round(5 * (1 + bonus));
 
-    setPetExp(prevExp => {
-      let exp = prevExp + gain;
-      let lvl = petLevel;
+        setPetExp(prevExp => {
+          let exp = prevExp + gain;
+          let lvl = petLevel;
+          let isLvlUp = false;
 
-      while (lvl < 10 && exp >= getLevelRequirement(lvl)) {
-        exp -= getLevelRequirement(lvl);
-        lvl++;
-      }
+          while (lvl < 10 && exp >= getLevelRequirement(lvl)) {
+            exp -= getLevelRequirement(lvl);
+            lvl++;
+            isLvlUp = true;
+          }
 
-      if (lvl !== petLevel) setPetLevel(lvl);
-      return exp;
-    });
+          if (lvl !== petLevel) {
+            setPetLevel(lvl);
+          }
 
-    return affection;
-  });
-};
-    const onPenalty=()=> setPetFavorability(v=>Math.max(0,v-5));
+          // 귀여운 캐릭터 대사 및 경험치/호감도 상승 안내
+          const dialogText = isLvlUp
+            ? `축하해! 할 일을 마쳐서 내 레벨이 ${lvl}로 올랐어! 🎉 정말 고마워! 🎈💕 (경험치 +${gain}P, 호감도 +2)`
+            : `와, 대단해! 할 일을 멋지게 끝마쳤구나! ✨ 하루하루 발전하는 네 모습이 너무 멋져! 😍 (경험치 +${gain}P, 호감도 +2)`;
+
+          setMessages(prevMsgs => [...prevMsgs, { role: 'model', parts: [{ text: dialogText }] }]);
+          setLastModelMessage(dialogText);
+          setIsTalking(true);
+
+          // 부드럽고 가벼운 효과음 재생 (Web Audio API Sine wave)
+          try {
+            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            if (audioCtx.state === 'suspended') {
+              audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'sine';
+            const t = audioCtx.currentTime;
+
+            osc.frequency.setValueAtTime(523.25, t); // C5
+            osc.frequency.setValueAtTime(659.25, t + 0.08); // E5
+            osc.frequency.setValueAtTime(783.99, t + 0.16); // G5
+            osc.frequency.setValueAtTime(1046.50, t + 0.24); // C6
+
+            gainNode.gain.setValueAtTime(0.012, t);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(t + 0.5);
+          } catch (e) {
+            console.warn('Audio feedback failed', e);
+          }
+
+          setTimeout(() => {
+            setIsTalking(false);
+            setLastModelMessage('');
+          }, 5500);
+
+          return exp;
+        });
+
+        return nextAffection;
+      });
+    };
+    const onPenalty = () => setPetFavorability(v => Math.max(0, v - 5));
     window.addEventListener('moni-todo-complete', onReward);
     window.addEventListener('moni-todo-fail', onPenalty);
-    return ()=>{window.removeEventListener('moni-todo-complete', onReward);window.removeEventListener('moni-todo-fail', onPenalty);};
+    return () => {
+      window.removeEventListener('moni-todo-complete', onReward);
+      window.removeEventListener('moni-todo-fail', onPenalty);
+    };
   }, [petExp, petLevel, petFavorability]);
-useEffect(() => {
+
+  useEffect(() => {
     localStorage.setItem('moni_pet_level', String(petLevel));
   }, [petLevel]);
-
-  useEffect(() => {
-    localStorage.setItem('moni_pet_exp', String(petExp));
-  }, [petExp]);
-
-  useEffect(() => {
-    localStorage.setItem('moni_pet_favorability', String(petFavorability));
-  }, [petFavorability]);
-
-  useEffect(() => {
-    localStorage.setItem('moni_pet_scale', String(petScale));
-  }, [petScale]);
-
-  useEffect(() => {
-    localStorage.setItem('moni_pet_hue', String(petHue));
-  }, [petHue]);
-
-  useEffect(() => {
-    localStorage.setItem('moni_pet_visible', String(isPetVisible));
-  }, [isPetVisible]);
 
   // Sync state between windows on storage events
   useEffect(() => {
@@ -342,6 +387,9 @@ useEffect(() => {
         if (e.key === 'moni_calendar_dark_mode' && e.newValue) {
           setIsDarkMode(e.newValue === 'true');
         }
+        if (e.key === 'moni_calendar_locked' && e.newValue) {
+          setIsCalendarLocked(e.newValue === 'true');
+        }
       } catch (err) {
         console.error("Storage sync parse error:", err);
       }
@@ -350,29 +398,34 @@ useEffect(() => {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Electron: Sync showCalendarOverlay state to the separate calendar window
+  // Electron: Sync showCalendarOverlay state to the main process
   useEffect(() => {
     if (isElectron && ipcRenderer) {
-      if (showCalendarOverlay) {
-        ipcRenderer.send('calendar-show');
-      } else {
-        ipcRenderer.send('calendar-hide');
-      }
+      ipcRenderer.send('calendar-state-changed', showCalendarOverlay);
     }
   }, [showCalendarOverlay]);
 
-  // Electron: Receive background calendar window close events to update visual button state in Pet widget
+  // Electron: Receive tray menu toggle calendar events
   useEffect(() => {
     if (isElectron && ipcRenderer) {
-      const handleExternalClose = () => {
-        setShowCalendarOverlay(false);
+      const handleExternalToggle = () => {
+        setShowCalendarOverlay(prev => !prev);
       };
-      ipcRenderer.on('calendar-closed-external', handleExternalClose);
+      ipcRenderer.on('toggle-calendar-external', handleExternalToggle);
       return () => {
-        ipcRenderer.removeListener('calendar-closed-external', handleExternalClose);
+        ipcRenderer.removeListener('toggle-calendar-external', handleExternalToggle);
       };
     }
   }, []);
+
+  // Electron: Force click-through (ignore mouse events) when all interactive overlays are closed
+  useEffect(() => {
+    if (isElectron && ipcRenderer) {
+      if (!showCalendarOverlay && !showStatusOverlay && !showChatInput) {
+        ipcRenderer.send('pet-leave');
+      }
+    }
+  }, [showCalendarOverlay, showStatusOverlay, showChatInput]);
 
   // Proactive check (every 30 seconds)
   useEffect(() => {
@@ -517,8 +570,6 @@ useEffect(() => {
     }
   };
 
-
-
   const addEvent = (date: Date, title: string, description: string, time: string, alertEnabled: boolean = true) => {
     const newEvent: CalendarEvent = {
       id: Math.random().toString(36).substring(2, 11),
@@ -570,54 +621,94 @@ useEffect(() => {
     }
   };
 
-  const handlePlay = () => {
-    setMessages(prev => [...prev, { role: 'model', parts: [{ text: '함께 노는 게 제일 즐거워! 🎈💕' }] }]);
-    setLastModelMessage('함께 노는 게 제일 즐거워! 🎈💕');
-    setIsTalking(true);
-    setTimeout(() => {
-      setIsTalking(false);
-      setLastModelMessage('');
-    }, 4000);
+  const handleDoubleClickPet = () => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const lastDoubleClickedDate = localStorage.getItem('moni_last_double_click_date');
+    
+    // 이쁜 하트/반짝임 느낌의 화음 사운드 (Web Audio API Sine wave)
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      const osc = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      osc.type = 'sine';
+      const t = audioCtx.currentTime;
+
+      osc.frequency.setValueAtTime(523.25, t); // C5
+      osc.frequency.setValueAtTime(659.25, t + 0.08); // E5
+      osc.frequency.setValueAtTime(880.00, t + 0.16); // A5
+
+      gainNode.gain.setValueAtTime(0.015, t);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+
+      osc.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(t + 0.45);
+    } catch (e) {
+      console.warn('Audio feedback failed', e);
+    }
+
+    if (lastDoubleClickedDate === todayStr) {
+      const msg = "히힛, 쓰다듬어줘서 정말 기분 좋아! 💕 (오늘의 쓰다듬기 호감도는 이미 올랐어!)";
+      setMessages(prev => [...prev, { role: 'model', parts: [{ text: msg }] }]);
+      setLastModelMessage(msg);
+      setIsTalking(true);
+      setTimeout(() => {
+        setIsTalking(false);
+        setLastModelMessage('');
+      }, 4000);
+    } else {
+      localStorage.setItem('moni_last_double_click_date', todayStr);
+      setPetFavorability(prev => Math.min(100, prev + 1));
+
+      const msg = "앗! 나를 더블클릭해서 쓰다듬어준 거야? 정말 따뜻해... 💖 (오늘 첫 쓰다듬기! 호감도 +1)";
+      setMessages(prev => [...prev, { role: 'model', parts: [{ text: msg }] }]);
+      setLastModelMessage(msg);
+      setIsTalking(true);
+      setTimeout(() => {
+        setIsTalking(false);
+        setLastModelMessage('');
+      }, 4000);
+    }
   };
 
-if (currentPath === '#/calendar' || currentPath === '#calendar') {
-  return (
-    <div
-      ref={containerRef}
-      className="fixed inset-0 bg-transparent overflow-hidden pointer-events-none"
-    >
-      <div className="absolute top-12 left-12 pointer-events-none origin-top">
-        <motion.div
-          drag={!isCalendarLocked}
-          dragListener={false}
-          dragControls={calendarDragControls}
-          dragMomentum={false}
-          dragElastic={0}
-          dragConstraints={containerRef}
-          className="pointer-events-auto"
-        >
-          <Calendar
-            dragControls={calendarDragControls}
-            events={events}
-            onAddEvent={addEvent}
-            onUpdateEvent={updateEvent}
-            onRemoveEvent={removeEvent}
-            isLocked={isCalendarLocked}
-            onToggleLock={() => setIsCalendarLocked(!isCalendarLocked)}
-            textColor={calendarColor}
-            onOpenSettings={(color) => setCalendarColor(color)}
-            onClose={() => {
-              if (ipcRenderer) {
-                ipcRenderer.send('calendar-close');
-              }
-            }}
-          />
-        </motion.div>
+  if (currentPath === '#/calendar' || currentPath === '#calendar') {
+    return (
+      <div
+        ref={containerRef}
+        className="fixed inset-0 bg-transparent overflow-hidden pointer-events-none"
+      >
+        <div className="absolute top-12 left-12 pointer-events-none origin-top">
+          <motion.div
+            drag={!isCalendarLocked}
+            dragMomentum={false}
+            dragElastic={0}
+            dragConstraints={containerRef}
+            className="pointer-events-auto"
+          >
+            <Calendar
+              events={events}
+              onAddEvent={addEvent}
+              onUpdateEvent={updateEvent}
+              onRemoveEvent={removeEvent}
+              isLocked={isCalendarLocked}
+              onToggleLock={() => setIsCalendarLocked(!isCalendarLocked)}
+              textColor={calendarColor}
+              onOpenSettings={(color) => setCalendarColor(color)}
+              onClose={() => {
+                if (ipcRenderer) {
+                  ipcRenderer.send('calendar-close');
+                }
+              }}
+            />
+          </motion.div>
+        </div>
       </div>
-    </div>
-  );
-}
-
+    );
+  }
 
   return (
     <div ref={containerRef} className="fixed inset-0 bg-transparent text-black font-sans overflow-hidden select-none pointer-events-none" id="desktop-boundary">
@@ -638,7 +729,7 @@ if (currentPath === '#/calendar' || currentPath === '#calendar') {
                    status={status}
                    isTalking={isTalking}
                    lastMessage={lastModelMessage}
-                   onPlay={handlePlay}
+                   onDoubleClickPet={handleDoubleClickPet}
                    showChatInput={showChatInput}
                    onToggleChat={() => setShowChatInput(prev => !prev)}
                    showCalendar={showCalendarOverlay}
@@ -661,7 +752,7 @@ if (currentPath === '#/calendar' || currentPath === '#calendar') {
         </div>
       </div>
 
-      {/* Draggable Status Overlay */}
+      {/* Draggable Status Overlay (Draggable Anywhere!) */}
       <AnimatePresence>
         {showStatusOverlay && (
           <div className="absolute left-[calc(100%-344px)] top-1/4 z-[80] pointer-events-none">
@@ -698,24 +789,23 @@ if (currentPath === '#/calendar' || currentPath === '#calendar') {
         )}
       </AnimatePresence>
 
-      {/* Draggable Calendar Overlay for Web Preview */}
+      {/* Draggable Calendar Overlay */}
       <AnimatePresence>
-        {!isElectron && showCalendarOverlay && (
+        {showCalendarOverlay && (
           <div className="absolute left-6 top-1/4 z-[80] pointer-events-none">
             <motion.div
               initial={{ opacity: 0, x: -50, scale: 0.95 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: -50, scale: 0.95 }}
               drag={!isCalendarLocked}
-              dragListener={false}
-              dragControls={calendarWebDragControls}
               dragMomentum={false}
               dragElastic={0}
               dragConstraints={containerRef}
+              onMouseEnter={() => ipcRenderer?.send('pet-hover')}
+              onMouseLeave={() => ipcRenderer?.send('pet-leave')}
               className="pointer-events-auto origin-top"
             >
               <Calendar
-                dragControls={calendarWebDragControls}
                 events={events}
                 onAddEvent={addEvent}
                 onUpdateEvent={updateEvent}
