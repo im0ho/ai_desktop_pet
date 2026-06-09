@@ -53,6 +53,8 @@ export default function App() {
     ];
   });
 
+  const [installedApps, setInstalledApps] = useState<string[]>([]);
+
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('moni_chat_messages');
@@ -136,6 +138,33 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!isElectron || !ipcRenderer) return;
+
+    let cancelled = false;
+
+    const loadApps = async () => {
+      try {
+        const result = await ipcRenderer.invoke('get-installed-apps');
+        if (cancelled) return;
+
+        const names = Array.isArray(result)
+          ? result.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean)
+          : [];
+
+        setInstalledApps(names);
+      } catch (error) {
+        console.error('Failed to load installed apps:', error);
+      }
+    };
+
+    loadApps();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  
   // Alarm clock schedule reminder check (every 5 seconds)
   useEffect(() => {
     const alarmTicker = setInterval(() => {
@@ -378,6 +407,26 @@ export default function App() {
       setMessages(prev => [...prev, { role: 'model', parts: [{ text: aiResponseText }] }]);
       setLastModelMessage(aiResponseText);
 
+      // Handle app / website launch requests
+      if (Array.isArray(data.launchApps) && data.launchApps.length > 0) {
+        if (isElectron && ipcRenderer) {
+          const launchResults = await Promise.all(
+            data.launchApps.map((appName: string) => ipcRenderer.invoke('launch-installed-app', appName))
+          );
+
+          const failed = launchResults.filter((result: any) => !result?.success);
+          if (failed.length > 0) {
+            const reason = failed[0]?.message || '앱 실행에 실패했어요.';
+            setMessages(prev => [...prev, { role: 'model', parts: [{ text: reason }] }]);
+            setLastModelMessage(reason);
+          }
+        } else {
+          const msg = '앱 실행은 데스크톱 앱에서만 사용할 수 있어요.';
+          setMessages(prev => [...prev, { role: 'model', parts: [{ text: msg }] }]);
+          setLastModelMessage(msg);
+        }
+      }
+        
       // Handle new events
       if (data.newEvents && data.newEvents.length > 0) {
         const aiEvents: CalendarEvent[] = data.newEvents.map((e: any) => ({
