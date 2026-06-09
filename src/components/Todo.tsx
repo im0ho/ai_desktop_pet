@@ -17,6 +17,7 @@ interface CustomTodo {
   id: string;
   text: string;
   completed: boolean;
+  rewardClaimed?: boolean;
   category: 'daily' | 'weekly' | 'monthly';
   createdAt: number;
   resetConfig?: {
@@ -50,7 +51,10 @@ export const Todo: React.FC<TodoProps> = ({
       const saved = localStorage.getItem('moni_custom_todos');
       if (saved) {
         try {
-          return JSON.parse(saved);
+          return JSON.parse(saved).map((todo:any) => ({
+            ...todo,
+            rewardClaimed: todo.rewardClaimed ?? false,
+}));
         } catch (e) {}
       }
     }
@@ -250,6 +254,19 @@ export const Todo: React.FC<TodoProps> = ({
     return [];
   });
 
+
+  const [rewardedEventIds, setRewardedEventIds] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('moni_rewarded_events');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {}
+      }
+    }
+    return [];
+  });
+
   const [inputValue, setInputValue] = useState('');
 
   // Persist custom todos
@@ -262,6 +279,11 @@ export const Todo: React.FC<TodoProps> = ({
     localStorage.setItem('moni_completed_events', JSON.stringify(completedEventIds));
   }, [completedEventIds]);
 
+  useEffect(() => {
+    localStorage.setItem('moni_rewarded_events', JSON.stringify(rewardedEventIds));
+  }, [rewardedEventIds]);
+
+
   // Automated reset checker and processor
   const checkAndRunResets = (todos: CustomTodo[]): CustomTodo[] => {
     let changed = false;
@@ -269,9 +291,9 @@ export const Todo: React.FC<TodoProps> = ({
     const now = new Date();
 
     const updated = todos.map((todo) => {
-      if (!todo.completed) return todo;
 
       const lastReset = todo.lastResetTimestamp || todo.createdAt;
+      const wasCompleted = todo.completed;
       let targetTime = 0;
       const config = todo.resetConfig || {
         dailyHour: 9,
@@ -324,9 +346,11 @@ export const Todo: React.FC<TodoProps> = ({
 
       if (lastReset < targetTime) {
         changed = true;
+        if (!todo.completed) { window.dispatchEvent(new Event('moni-todo-fail')); }
         return {
           ...todo,
           completed: false,
+          rewardClaimed: false,
           lastResetTimestamp: nowEpoch,
         };
       }
@@ -374,30 +398,52 @@ export const Todo: React.FC<TodoProps> = ({
     if (e) e.preventDefault();
     if (!inputValue.trim() || activeTab === 'today') return;
 
-    const newTodo: CustomTodo = {
-      id: Math.random().toString(36).substring(2, 11),
-      text: inputValue.trim(),
-      completed: false,
-      category: activeTab,
-      createdAt: Date.now(),
-      lastResetTimestamp: Date.now(),
-      resetConfig: {
-        dailyHour: activeTab === 'daily' ? dailyHour : undefined,
-        weeklyDay: activeTab === 'weekly' ? weeklyDay : undefined,
-        monthlyDate: activeTab === 'monthly' ? monthlyDate : undefined,
-      }
-    };
+  const newTodo: CustomTodo = {
+    id: crypto.randomUUID(),
+    text: inputValue.trim(),
+    completed: false,
+    rewardClaimed: false,
+    category: activeTab,
+    createdAt: Date.now(),
+    lastResetTimestamp: Date.now(),
+    resetConfig: {
+      dailyHour: activeTab === 'daily' ? dailyHour : undefined,
+      weeklyDay: activeTab === 'weekly' ? weeklyDay : undefined,
+      monthlyDate: activeTab === 'monthly' ? monthlyDate : undefined,
+  }
+};
 
     setCustomTodos((prev) => [newTodo, ...prev]);
     setInputValue('');
   };
 
   // Toggle custom todo checked status
-  const toggleTodo = (id: string) => {
-    setCustomTodos((prev) =>
-      prev.map((todo) => (todo.id === id ? { ...todo, completed: !todo.completed } : todo))
-    );
-  };
+const toggleTodo = (id: string) => {
+  setCustomTodos((prev) =>
+    prev.map((todo) => {
+      if (todo.id !== id) return todo;
+
+      const next = !todo.completed;
+
+      // 처음 완료했을 때만 경험치 지급
+      if (next && !todo.rewardClaimed) {
+        window.dispatchEvent(new Event('moni-todo-complete'));
+
+        return {
+          ...todo,
+          completed: true,
+          rewardClaimed: true,
+        };
+      }
+
+      // 체크 해제
+      return {
+        ...todo,
+        completed: next,
+      };
+    })
+  );
+};
 
   // Delete custom todo
   const deleteTodo = (id: string) => {
@@ -406,9 +452,17 @@ export const Todo: React.FC<TodoProps> = ({
 
   // Toggle automated today event checklist status
   const toggleTodayEvent = (id: string) => {
-    setCompletedEventIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
+    const alreadyRewarded = rewardedEventIds.includes(id);
+
+    if (!alreadyRewarded) {
+      window.dispatchEvent(new Event('moni-todo-complete'));
+      setRewardedEventIds((prev) => [...prev, id]);
+    }
+
+    setCompletedEventIds((prev) => {
+      const already = prev.includes(id);
+      return already ? prev.filter((item) => item !== id) : [...prev, id];
+    });
   };
 
   // Filtered lists depending on active tab with automatic sorting!

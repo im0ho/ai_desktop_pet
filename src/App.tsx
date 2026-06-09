@@ -101,7 +101,7 @@ export default function App() {
       const saved = localStorage.getItem('moni_pet_favorability');
       if (saved) return Number(saved);
     }
-    return 30; // starts at 30
+    return 0;
   });
   const [petScale, setPetScale] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -123,6 +123,8 @@ export default function App() {
     }
     return false;
   });
+
+  const rewardLockRef = useRef(0);
 
   const [isPetVisible, setIsPetVisible] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -243,7 +245,46 @@ export default function App() {
     localStorage.setItem('moni_chat_messages', JSON.stringify(messages));
   }, [messages]);
 
+  
+
+  useEffect(() => { localStorage.setItem('moni_pet_exp', String(petExp)); }, [petExp]);
+  useEffect(() => { localStorage.setItem('moni_pet_favorability', String(petFavorability)); }, [petFavorability]);
+
   useEffect(() => {
+    const getLevelRequirement = (level:number) => 50 + level * 50;
+
+const onReward = () => {
+  const now = Date.now();
+  if (now - rewardLockRef.current < 300) return;
+  rewardLockRef.current = now;
+
+  setPetFavorability(prev => {
+    const affection = Math.min(100, prev + 2);
+    const bonus = affection >= 100 ? 0.5 : affection >= 60 ? 0.3 : affection >= 30 ? 0.1 : 0;
+    const gain = Math.round(5 * (1 + bonus));
+
+    setPetExp(prevExp => {
+      let exp = prevExp + gain;
+      let lvl = petLevel;
+
+      while (lvl < 10 && exp >= getLevelRequirement(lvl)) {
+        exp -= getLevelRequirement(lvl);
+        lvl++;
+      }
+
+      if (lvl !== petLevel) setPetLevel(lvl);
+      return exp;
+    });
+
+    return affection;
+  });
+};
+    const onPenalty=()=> setPetFavorability(v=>Math.max(0,v-5));
+    window.addEventListener('moni-todo-complete', onReward);
+    window.addEventListener('moni-todo-fail', onPenalty);
+    return ()=>{window.removeEventListener('moni-todo-complete', onReward);window.removeEventListener('moni-todo-fail', onPenalty);};
+  }, [petExp, petLevel, petFavorability]);
+useEffect(() => {
     localStorage.setItem('moni_pet_level', String(petLevel));
   }, [petLevel]);
 
