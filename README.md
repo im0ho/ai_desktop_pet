@@ -1,6 +1,6 @@
 # 🐾 Moni 데스크탑 AI 비서 펫 (Developer Update Log)
 
-본 저장소는 **Electron + React + Tailwind CSS + Google Gemini API** 기술 스택으로 구성된 똑똑하고 사랑스러운 데스크탑 인공지능 비서 펫 **Moni(모니)**의 릴리즈 및 개발 일지입니다. 오직 개발의 지속 가능성과 체계적인 빌드 히스토리 관리를 위해 기능 추가 및 수정 사항을 최근 일자 순으로 공정한 기록물로 보존합니다.
+본 저장소는 데스크탑 인공지능 비서 펫 **Moni(모니)**의 릴리즈 및 개발 일지입니다.
 
 ---
 
@@ -55,15 +55,18 @@
 
 ### 1. 전제 조건 및 개발 설치
 ```bash
-# 디펜던시 설치
+# node_module 설치
 npm install
 
-# 데스크탑 메인 프레임워크 구동
+# 데스크탑에서 직접 구동
 npm run desktop
+
+# installer 생성
+npm run dist:installer
 ```
 
 ### 2. 가용 환경 변수 (.env)
 ```env
 # Google Developer Console에서 제공한 최신 키 적용 가능 (미체결 시 자동 로컬 가상 챗봇으로 운전)
-GEMINI_API_KEY=AIzaSyA...
+예시) GEMINI_API_KEY=AIzaSyA...
 ```
