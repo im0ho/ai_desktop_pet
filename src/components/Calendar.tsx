@@ -19,6 +19,9 @@ interface CalendarProps {
   onToggleLock: () => void;
   textColor?: string;
   onOpenSettings?: (color: string) => void;
+  geminiApiKey?: string;
+  onSaveGeminiApiKey?: (key: string) => void;
+  onClearGeminiApiKey?: () => void;
   onClose?: () => void;
 }
 
@@ -32,6 +35,9 @@ export const Calendar: React.FC<CalendarProps> = ({
   onToggleLock,
   textColor = '#000000',
   onOpenSettings,
+  geminiApiKey = '',
+  onSaveGeminiApiKey,
+  onClearGeminiApiKey,
   onClose
 }) => {
   const [showSettingsInternal, setShowSettingsInternal] = useState(false);
@@ -61,6 +67,8 @@ export const Calendar: React.FC<CalendarProps> = ({
     return 10;
   });
 
+  const [apiKeyInput, setApiKeyInput] = useState<string>(geminiApiKey);
+
   useEffect(() => {
     localStorage.setItem('moni_calendar_show_todo', String(showTodo));
   }, [showTodo]);
@@ -72,6 +80,10 @@ export const Calendar: React.FC<CalendarProps> = ({
   useEffect(() => {
     localStorage.setItem('moni_todo_reset_warn_minutes', String(todoResetWarnMinutes));
   }, [todoResetWarnMinutes]);
+
+  useEffect(() => {
+    setApiKeyInput(geminiApiKey);
+  }, [geminiApiKey]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
@@ -124,13 +136,20 @@ export const Calendar: React.FC<CalendarProps> = ({
       onMouseLeave={() => ipcRenderer?.send('pet-leave')}
       className="flex items-start gap-4 pointer-events-auto"
     >
-      <div className={cn(
-        "backdrop-blur-md border rounded-3xl p-6 shadow-2xl w-[350px] shrink-0 pointer-events-auto group/calendar relative transition-all duration-500 select-none",
-        isLocked ? "cursor-default" : "cursor-grab active:cursor-grabbing",
-        isDarkMode 
-          ? "bg-[#141416]/95 text-white border-white/5 shadow-black/80" 
-          : "bg-white/90 text-black border-black/10"
-      )}>
+      <div 
+        onPointerDown={(e) => {
+          if (!isLocked && dragControls) {
+            dragControls.start(e);
+          }
+        }}
+        className={cn(
+          "backdrop-blur-md border rounded-3xl p-6 shadow-2xl w-[350px] shrink-0 pointer-events-auto group/calendar relative transition-all duration-500 select-none",
+          isLocked ? "cursor-default" : "cursor-grab active:cursor-grabbing",
+          isDarkMode 
+            ? "bg-[#141416]/95 text-white border-white/5 shadow-black/80" 
+            : "bg-white/90 text-black border-black/10"
+        )}
+      >
       
       <AnimatePresence>
         {showSettingsInternal && (
@@ -173,6 +192,7 @@ export const Calendar: React.FC<CalendarProps> = ({
                     </p>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setIsDarkMode(!isDarkMode)}
                     className={cn(
                       "w-10 h-6 flex items-center rounded-full p-1 transition-colors duration-350 focus:outline-none cursor-pointer",
@@ -184,6 +204,59 @@ export const Calendar: React.FC<CalendarProps> = ({
                       className="w-4 h-4 rounded-full bg-white shadow-md cursor-pointer" 
                     />
                   </button>
+                </div>
+
+                {/* 1.5 Gemini API 설정 */}
+                <div className="space-y-3 border-b border-black/5 dark:border-white/5 pb-4">
+                  <div>
+                    <h4 className="text-[13px] font-bold">🔑 Gemini API Key</h4>
+                    <p className={cn("text-[10px] mt-0.5", isDarkMode ? "text-zinc-400" : "text-black/40")}>
+                      여기에 입력한 키가 채팅과 일정 추천 요청에 바로 사용됩니다.
+                    </p>
+                  </div>
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    placeholder="AIza..."
+                    className={cn(
+                      "w-full px-3 py-2 border rounded-xl text-[13px] font-medium outline-none transition-colors",
+                      isDarkMode
+                        ? "bg-white/5 border-white/10 text-white placeholder:text-zinc-500"
+                        : "bg-black/5 border-black/10 text-black placeholder:text-black/30"
+                    )}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onSaveGeminiApiKey?.(apiKeyInput.trim())}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[12px] font-bold transition-colors cursor-pointer",
+                        isDarkMode ? "bg-indigo-600 text-white hover:bg-indigo-500" : "bg-black text-white hover:bg-black/80"
+                      )}
+                    >
+                      저장
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setApiKeyInput('');
+                        onClearGeminiApiKey?.();
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[12px] font-bold transition-colors cursor-pointer",
+                        isDarkMode ? "bg-white/10 text-white hover:bg-white/15" : "bg-black/5 text-black hover:bg-black/10"
+                      )}
+                    >
+                      삭제
+                    </button>
+                    <span className={cn("text-[10px] ml-auto", isDarkMode ? "text-zinc-400" : "text-black/40")}>
+                      {apiKeyInput.trim() ? "저장 대기 중" : "비어 있음"}
+                    </span>
+                  </div>
                 </div>
 
                 {/* 2. To-Do 초기화 알림 설정 */}

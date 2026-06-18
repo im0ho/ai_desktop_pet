@@ -77,7 +77,6 @@ export default function App() {
     return false;
   });
   const [isLoading, setIsLoading] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [showSettings, setShowSettings] = useState(false);
   const [showChatInput, setShowChatInput] = useState(false);
   const [lastModelMessage, setLastModelMessage] = useState('');
@@ -129,6 +128,42 @@ export default function App() {
     return false;
   });
 
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('moni_gemini_api_key') || '';
+    }
+    return '';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('moni_gemini_api_key', geminiApiKey);
+  }, [geminiApiKey]);
+
+  // Additional animal features
+  const [petColor, setPetColor] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('moni_pet_color');
+      if (saved) return saved;
+    }
+    return '#6366f1';
+  });
+
+  const [characterType, setCharacterType] = useState<'original' | 'rabbit' | 'cat' | 'hamster' | 'dog' | 'bear'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('moni_character_type');
+      if (saved) return saved as 'original' | 'rabbit' | 'cat' | 'hamster' | 'dog' | 'bear';
+    }
+    return 'bear';
+  });
+
+  const [equippedItem, setEquippedItem] = useState<'none' | 'sunglasses' | 'hat' | 'ribbon'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('moni_equipped_item');
+      if (saved) return saved as 'none' | 'sunglasses' | 'hat' | 'ribbon';
+    }
+    return 'none';
+  });
+
   const rewardLockRef = useRef(0);
 
   const [isPetVisible, setIsPetVisible] = useState<boolean>(() => {
@@ -139,11 +174,7 @@ export default function App() {
     return true; // default visible
   });
 
-  // Update clock every second
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+
 
   useEffect(() => {
     if (!isElectron || !ipcRenderer) return;
@@ -266,79 +297,158 @@ export default function App() {
   }, [isCalendarLocked]);
 
   useEffect(() => {
+    localStorage.setItem('moni_pet_color', petColor);
+  }, [petColor]);
+
+  useEffect(() => {
+    localStorage.setItem('moni_character_type', characterType);
+  }, [characterType]);
+
+  useEffect(() => {
     const getLevelRequirement = (level:number) => 50 + level * 50;
 
-    const onReward = () => {
+    const onReward = (e?: Event) => {
       const now = Date.now();
       if (now - rewardLockRef.current < 300) return;
       rewardLockRef.current = now;
 
-      setPetFavorability(prev => {
-        const nextAffection = Math.min(100, prev + 2);
-        const bonus = nextAffection >= 100 ? 0.5 : nextAffection >= 60 ? 0.3 : nextAffection >= 30 ? 0.1 : 0;
-        const gain = Math.round(5 * (1 + bonus));
+      const custEvt = e as CustomEvent;
+      const category: 'today' | 'daily' | 'weekly' | 'monthly' = 
+        custEvt?.detail?.category || 'today';
 
-        setPetExp(prevExp => {
-          let exp = prevExp + gain;
-          let lvl = petLevel;
-          let isLvlUp = false;
+      // Check and update limits
+      const savedLimits = localStorage.getItem('moni_todo_reward_limits');
+      const initialLimits = {
+        today: { count: 0, lastReset: 0 },
+        daily: { count: 0, lastReset: 0 },
+        weekly: { count: 0, lastReset: 0 },
+        monthly: { count: 0, lastReset: 0 }
+      };
+      let limits = initialLimits;
+      if (savedLimits) {
+        try { limits = { ...initialLimits, ...JSON.parse(savedLimits) }; } catch (err) {}
+      }
 
-          while (lvl < 10 && exp >= getLevelRequirement(lvl)) {
-            exp -= getLevelRequirement(lvl);
-            lvl++;
-            isLvlUp = true;
-          }
+      // calculate reset periods (daily at 00:00, weekly at monday 00:00, monthly at 1st day 00:00)
+      const pDaily = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+      const pWeekly = (() => {
+        const d = new Date(); d.setHours(0,0,0,0);
+        const day = d.getDay();
+        const diff = day === 0 ? 6 : day - 1;
+        d.setDate(d.getDate() - diff);
+        return d.getTime();
+      })();
+      const pMonthly = (() => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(1); return d.getTime(); })();
 
-          if (lvl !== petLevel) {
-            setPetLevel(lvl);
-          }
+      if (limits.today.lastReset < pDaily) limits.today = { count: 0, lastReset: now };
+      if (limits.daily.lastReset < pDaily) limits.daily = { count: 0, lastReset: now };
+      if (limits.weekly.lastReset < pWeekly) limits.weekly = { count: 0, lastReset: now };
+      if (limits.monthly.lastReset < pMonthly) limits.monthly = { count: 0, lastReset: now };
 
-          // 귀여운 캐릭터 대사 및 경험치/호감도 상승 안내
-          const dialogText = isLvlUp
-            ? `축하해! 할 일을 마쳐서 내 레벨이 ${lvl}로 올랐어! 🎉 정말 고마워! 🎈💕 (경험치 +${gain}P, 호감도 +2)`
-            : `와, 대단해! 할 일을 멋지게 끝마쳤구나! ✨ 하루하루 발전하는 네 모습이 너무 멋져! 😍 (경험치 +${gain}P, 호감도 +2)`;
+      const categoryNames = {
+        today: '오늘의 일정',
+        daily: '일간 계획',
+        weekly: '주간 계획',
+        monthly: '월간 계획'
+      };
+      const categoryDisplay = categoryNames[category] || '할 일';
 
-          setMessages(prevMsgs => [...prevMsgs, { role: 'model', parts: [{ text: dialogText }] }]);
-          setLastModelMessage(dialogText);
-          setIsTalking(true);
+      if (limits[category].count >= 3) {
+        // Limit reached: do not grant EXP or Favorability!
+        const limitReachedDialog = `할 일을 정말 멋지게 마쳤구나! 👍 비록 이번엔 [${categoryDisplay}] 보상 획득 제한(각 주기당 최대 3회)을 모두 채웠지만, 스스로의 목표를 달성한 네 모습이 정말 듬직하고 멋져! 💙`;
+        setMessages(prevMsgs => [...prevMsgs, { role: 'model', parts: [{ text: limitReachedDialog }] }]);
+        setLastModelMessage(limitReachedDialog);
+        setIsTalking(true);
 
-          // 부드럽고 가벼운 효과음 재생 (Web Audio API Sine wave)
-          try {
-            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            if (audioCtx.state === 'suspended') {
-              audioCtx.resume();
-            }
-            const osc = audioCtx.createOscillator();
-            const gainNode = audioCtx.createGain();
-            osc.type = 'sine';
-            const t = audioCtx.currentTime;
+        try {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          if (audioCtx.state === 'suspended') audioCtx.resume();
+          const osc = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+          osc.type = 'sine';
+          const t = audioCtx.currentTime;
+          osc.frequency.setValueAtTime(392.00, t); // G4 soft hint
+          gainNode.gain.setValueAtTime(0.008, t);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          osc.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          osc.start();
+          osc.stop(t + 0.35);
+        } catch (err) {}
 
-            osc.frequency.setValueAtTime(523.25, t); // C5
-            osc.frequency.setValueAtTime(659.25, t + 0.08); // E5
-            osc.frequency.setValueAtTime(783.99, t + 0.16); // G5
-            osc.frequency.setValueAtTime(1046.50, t + 0.24); // C6
+        setTimeout(() => {
+          setIsTalking(false);
+          setLastModelMessage('');
+        }, 5500);
 
-            gainNode.gain.setValueAtTime(0.012, t);
-            gainNode.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+        // Save updated limits after reset check, but without incrementing count
+        localStorage.setItem('moni_todo_reward_limits', JSON.stringify(limits));
+        window.dispatchEvent(new Event('limits-updated'));
+        return;
+      }
 
-            osc.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(t + 0.5);
-          } catch (e) {
-            console.warn('Audio feedback failed', e);
-          }
+      // Increment count
+      limits[category].count += 1;
+      localStorage.setItem('moni_todo_reward_limits', JSON.stringify(limits));
+      window.dispatchEvent(new Event('limits-updated'));
 
-          setTimeout(() => {
-            setIsTalking(false);
-            setLastModelMessage('');
-          }, 5500);
+      const nextAffection = Math.min(100, petFavorability + 2);
+      const gain = 10 + Math.floor(nextAffection / 5);
 
-          return exp;
-        });
+      let nextExp = petExp + gain;
+      let nextLvl = petLevel;
+      let isLvlUp = false;
 
-        return nextAffection;
-      });
+      while (nextLvl < 10 && nextExp >= getLevelRequirement(nextLvl)) {
+        nextExp -= getLevelRequirement(nextLvl);
+        nextLvl++;
+        isLvlUp = true;
+      }
+
+      setPetFavorability(nextAffection);
+      setPetExp(nextExp);
+      if (nextLvl !== petLevel) {
+        setPetLevel(nextLvl);
+      }
+
+      const dialogText = isLvlUp
+        ? `축하해! [${categoryDisplay}] 할 일을 마쳐서 내 레벨이 ${nextLvl}로 올랐어! 🎉 정말 고마워! 🎈💕 (경험치 +${gain}P, 호감도 +2, 이번 주기 획득: ${limits[category].count}/3)`
+        : `와, 대단해! [${categoryDisplay}] 할 일을 멋지게 끝마쳤구나! ✨ 하루하루 발전하는 네 모습이 너무 멋져! 😍 (경험치 +${gain}P, 호감도 +2, 이번 주기 획득: ${limits[category].count}/3)`;
+
+      setMessages(prevMsgs => [...prevMsgs, { role: 'model', parts: [{ text: dialogText }] }]);
+      setLastModelMessage(dialogText);
+      setIsTalking(true);
+
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        osc.type = 'sine';
+        const t = audioCtx.currentTime;
+
+        osc.frequency.setValueAtTime(523.25, t); // C5
+        osc.frequency.setValueAtTime(659.25, t + 0.08); // E5
+        osc.frequency.setValueAtTime(783.99, t + 0.16); // G5
+        osc.frequency.setValueAtTime(1046.50, t + 0.24); // C6
+
+        gainNode.gain.setValueAtTime(0.012, t);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+
+        osc.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(t + 0.5);
+      } catch (ecc) {
+        console.warn('Audio feedback failed', ecc);
+      }
+
+      setTimeout(() => {
+        setIsTalking(false);
+        setLastModelMessage('');
+      }, 5500);
     };
     const onPenalty = () => setPetFavorability(v => Math.max(0, v - 5));
     window.addEventListener('moni-todo-complete', onReward);
@@ -389,6 +499,18 @@ export default function App() {
         }
         if (e.key === 'moni_calendar_locked' && e.newValue) {
           setIsCalendarLocked(e.newValue === 'true');
+        }
+        if (e.key === 'moni_gemini_api_key') {
+          setGeminiApiKey(e.newValue || '');
+        }
+        if (e.key === 'moni_pet_color' && e.newValue) {
+          setPetColor(e.newValue);
+        }
+        if (e.key === 'moni_character_type' && e.newValue) {
+          setCharacterType(e.newValue as 'original' | 'rabbit' | 'cat' | 'hamster' | 'dog' | 'bear');
+        }
+        if (e.key === 'moni_equipped_item' && e.newValue) {
+          setEquippedItem(e.newValue as 'none' | 'sunglasses' | 'hat' | 'ribbon');
         }
       } catch (err) {
         console.error("Storage sync parse error:", err);
@@ -480,6 +602,68 @@ export default function App() {
     
     // UI feedback for sending
     setLastModelMessage('...'); 
+
+    // Intercept Developer Testing Commands
+    const trimmed = text.trim();
+    if (trimmed.startsWith('/command')) {
+      const matchLevel = trimmed.match(/^\/command\s+레벨\s+(\d+)$/);
+      const matchExp = trimmed.match(/^\/command\s+경험치\s+(\d+)$/);
+      const matchFav = trimmed.match(/^\/command\s+호감도\s+(\d+)$/);
+
+      let successMessage = '';
+      if (matchLevel) {
+        const value = parseInt(matchLevel[1], 10);
+        setPetLevel(value);
+        successMessage = `🔧 [개발자 콘솔] 레벨이 ${value}(으)로 변경되었습니다.`;
+      } else if (matchExp) {
+        const value = parseInt(matchExp[1], 10);
+        setPetExp(value);
+        successMessage = `🔧 [개발자 콘솔] 경험치가 ${value} EXP로 변경되었습니다.`;
+      } else if (matchFav) {
+        const value = Math.min(100, Math.max(0, parseInt(matchFav[1], 10)));
+        setPetFavorability(value);
+        successMessage = `🔧 [개발자 콘솔] 호감도가 ${value}(으)로 변경되었습니다.`;
+      } else if (trimmed === '/command 초기화') {
+        const freshLimits = {
+          today: { count: 0, lastReset: Date.now() },
+          daily: { count: 0, lastReset: Date.now() },
+          weekly: { count: 0, lastReset: Date.now() },
+          monthly: { count: 0, lastReset: Date.now() }
+        };
+        localStorage.setItem('moni_todo_reward_limits', JSON.stringify(freshLimits));
+        localStorage.setItem('moni_rewarded_events', JSON.stringify([]));
+        localStorage.setItem('moni_completed_events', JSON.stringify([]));
+
+        const savedCustomTodos = localStorage.getItem('moni_custom_todos');
+        if (savedCustomTodos) {
+          try {
+            const parsed = JSON.parse(savedCustomTodos);
+            if (Array.isArray(parsed)) {
+              const resetTodos = parsed.map((todo: any) => ({
+                ...todo,
+                completed: false,
+                rewardClaimed: false
+              }));
+              localStorage.setItem('moni_custom_todos', JSON.stringify(resetTodos));
+            }
+          } catch (e) {}
+        }
+
+        window.dispatchEvent(new Event('moni-reset'));
+        window.dispatchEvent(new Event('limits-updated'));
+
+        successMessage = `🔧 [개발자 콘솔] 보상 획득 제한 및 체크리스트 완료/보상 획득 여부가 성공적으로 초기화되었습니다!`;
+      } else {
+        successMessage = `⚠️ [개발자 콘솔] 올바르지 않은 명령 형식입니다.\n사용법: /command 레벨 (숫자) | 경험치 (숫자) | 호감도 (숫자) | 초기화`;
+      }
+
+      setMessages(prev => [...prev, { role: 'model', parts: [{ text: successMessage }] }]);
+      setLastModelMessage(successMessage);
+      setIsLoading(false);
+      setShowChatInput(false);
+      setTimeout(() => setIsTalking(false), 2000);
+      return;
+    }
 
     try {
       const response = await fetch(`${apiBase}/api/chat`, {
@@ -675,7 +859,7 @@ export default function App() {
     }
   };
 
-  if (currentPath === '#/calendar' || currentPath === '#calendar') {
+  if (isElectron && (currentPath === '#/calendar' || currentPath === '#calendar')) {
     return (
       <div
         ref={containerRef}
@@ -687,6 +871,16 @@ export default function App() {
             dragMomentum={false}
             dragElastic={0}
             dragConstraints={containerRef}
+            onMouseEnter={() => {
+              if (ipcRenderer) {
+                ipcRenderer.send('calendar-hover');
+              }
+            }}
+            onMouseLeave={() => {
+              if (ipcRenderer) {
+                ipcRenderer.send('calendar-leave');
+              }
+            }}
             className="pointer-events-auto"
           >
             <Calendar
@@ -698,6 +892,9 @@ export default function App() {
               onToggleLock={() => setIsCalendarLocked(!isCalendarLocked)}
               textColor={calendarColor}
               onOpenSettings={(color) => setCalendarColor(color)}
+              geminiApiKey={geminiApiKey}
+              onSaveGeminiApiKey={setGeminiApiKey}
+              onClearGeminiApiKey={() => setGeminiApiKey('')}
               onClose={() => {
                 if (ipcRenderer) {
                   ipcRenderer.send('calendar-close');
@@ -744,7 +941,9 @@ export default function App() {
                      setShowStatusOverlay(prev => !prev);
                    }}
                    petScale={petScale}
-                   petHue={petHue}
+                   petColor={petColor}
+                   characterType={characterType}
+                   equippedItem={equippedItem}
                 />
               </motion.div>
             )}
@@ -783,6 +982,12 @@ export default function App() {
                 isDarkMode={isDarkMode}
                 isPetVisible={isPetVisible}
                 onTogglePetVisibility={() => setIsPetVisible(!isPetVisible)}
+                characterType={characterType}
+                onUpdateCharacterType={setCharacterType}
+                equippedItem={equippedItem}
+                onUpdateEquippedItem={setEquippedItem}
+                petColor={petColor}
+                onUpdatePetColor={setPetColor}
               />
             </motion.div>
           </div>
@@ -791,13 +996,15 @@ export default function App() {
 
       {/* Draggable Calendar Overlay */}
       <AnimatePresence>
-        {showCalendarOverlay && (
+        {!isElectron && showCalendarOverlay && (
           <div className="absolute left-6 top-1/4 z-[80] pointer-events-none">
             <motion.div
               initial={{ opacity: 0, x: -50, scale: 0.95 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: -50, scale: 0.95 }}
               drag={!isCalendarLocked}
+              dragListener={false}
+              dragControls={calendarWebDragControls}
               dragMomentum={false}
               dragElastic={0}
               dragConstraints={containerRef}
@@ -806,6 +1013,7 @@ export default function App() {
               className="pointer-events-auto origin-top"
             >
               <Calendar
+                dragControls={calendarWebDragControls}
                 events={events}
                 onAddEvent={addEvent}
                 onUpdateEvent={updateEvent}
@@ -814,6 +1022,9 @@ export default function App() {
                 onToggleLock={() => setIsCalendarLocked(!isCalendarLocked)}
                 textColor={calendarColor}
                 onOpenSettings={(color) => setCalendarColor(color)}
+                geminiApiKey={geminiApiKey}
+                onSaveGeminiApiKey={setGeminiApiKey}
+                onClearGeminiApiKey={() => setGeminiApiKey('')}
                 onClose={() => setShowCalendarOverlay(false)}
               />
             </motion.div>

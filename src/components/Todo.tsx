@@ -95,6 +95,78 @@ export const Todo: React.FC<TodoProps> = ({
     localStorage.setItem('moni_todo_warned_resets', JSON.stringify(warnedResets));
   }, [warnedResets]);
 
+  const [rewardLimits, setRewardLimits] = useState<Record<string, number>>({
+    today: 0,
+    daily: 0,
+    weekly: 0,
+    monthly: 0
+  });
+
+  const loadRewardLimits = () => {
+    const saved = localStorage.getItem('moni_todo_reward_limits');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setRewardLimits({
+          today: parsed.today?.count ?? 0,
+          daily: parsed.daily?.count ?? 0,
+          weekly: parsed.weekly?.count ?? 0,
+          monthly: parsed.monthly?.count ?? 0
+        });
+      } catch (e) {}
+    }
+  };
+
+  const loadAllFromStorage = () => {
+    loadRewardLimits();
+    
+    const savedTodos = localStorage.getItem('moni_custom_todos');
+    if (savedTodos) {
+      try {
+        setCustomTodos(JSON.parse(savedTodos).map((todo: any) => ({
+          ...todo,
+          rewardClaimed: todo.rewardClaimed ?? false,
+        })));
+      } catch (e) {}
+    } else {
+      setCustomTodos([]);
+    }
+
+    const savedCompleted = localStorage.getItem('moni_completed_events');
+    if (savedCompleted) {
+      try { setCompletedEventIds(JSON.parse(savedCompleted)); } catch (e) {}
+    } else {
+      setCompletedEventIds([]);
+    }
+
+    const savedRewarded = localStorage.getItem('moni_rewarded_events');
+    if (savedRewarded) {
+      try { setRewardedEventIds(JSON.parse(savedRewarded)); } catch (e) {}
+    } else {
+      setRewardedEventIds([]);
+    }
+  };
+
+  useEffect(() => {
+    loadRewardLimits();
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'moni_todo_reward_limits') {
+        loadRewardLimits();
+      }
+    };
+    const handleReset = () => {
+      loadAllFromStorage();
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('limits-updated', loadRewardLimits);
+    window.addEventListener('moni-reset', handleReset);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('limits-updated', loadRewardLimits);
+      window.removeEventListener('moni-reset', handleReset);
+    };
+  }, []);
+
   const getMinutesToNextReset = (todo: CustomTodo): number => {
     const now = new Date();
     const nowEpoch = now.getTime();
@@ -444,7 +516,7 @@ export const Todo: React.FC<TodoProps> = ({
 
         // 처음 완료했을 때만 경험치 지급
         if (next && !todo.rewardClaimed) {
-          window.dispatchEvent(new Event('moni-todo-complete'));
+          window.dispatchEvent(new CustomEvent('moni-todo-complete', { detail: { category: todo.category } }));
 
           return {
             ...todo,
@@ -472,7 +544,7 @@ export const Todo: React.FC<TodoProps> = ({
     const alreadyRewarded = rewardedEventIds.includes(id);
 
     if (!alreadyRewarded) {
-      window.dispatchEvent(new Event('moni-todo-complete'));
+      window.dispatchEvent(new CustomEvent('moni-todo-complete', { detail: { category: 'today' } }));
       setRewardedEventIds((prev) => [...prev, id]);
     }
 
@@ -892,9 +964,12 @@ export const Todo: React.FC<TodoProps> = ({
       </div>
       
       {/* Tiny descriptive footer */}
-      <div className="mt-2 text-center select-none">
+      <div className="mt-2 text-center select-none flex flex-col gap-0.5">
         <span className={cn("text-[10px] font-black uppercase tracking-widest", isDarkMode ? "text-zinc-400" : "text-black/25")}>
           {activeTab === 'today' ? '총 ' + todayEvents.length + '개의 알림 일정' : '완료 ' + customTodos.filter(t => t.category === activeTab && t.completed).length + '개 / 전체 ' + customTodos.filter(t => t.category === activeTab).length + '개'}
+        </span>
+        <span className={cn("text-[9.5px] font-black tracking-wider uppercase", isDarkMode ? "text-indigo-400" : "text-indigo-600/80")}>
+          🎁 {activeTab === 'today' ? '오늘 일정' : activeTab === 'daily' ? '일간 계획' : activeTab === 'weekly' ? '주간 계획' : '월간 계획'} 보상 획득: {rewardLimits[activeTab] ?? 0}/3회
         </span>
       </div>
     </div>

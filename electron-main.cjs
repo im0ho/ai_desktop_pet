@@ -520,6 +520,19 @@ function togglePetWindow() {
 }
 
 function toggleCalendarWindow() {
+  if (!calendarWindow || calendarWindow.isDestroyed()) {
+    createCalendarWindow();
+  }
+  if (isWindowVisible(calendarWindow)) {
+    calendarWindow.hide();
+    isCalendarVisible = false;
+  } else {
+    calendarWindow.show();
+    calendarWindow.setIgnoreMouseEvents(true, { forward: true });
+    isCalendarVisible = true;
+  }
+  updateTrayMenu();
+
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send('toggle-calendar-external');
   }
@@ -696,6 +709,7 @@ function createCalendarWindow() {
     skipTaskbar: true,
 
     focusable: true,
+    alwaysOnTop: true,
 
     webPreferences: {
       nodeIntegration: true,
@@ -725,7 +739,7 @@ function createCalendarWindow() {
   });
 
   calendarWindow.setVisibleOnAllWorkspaces(true);
-  calendarWindow.setAlwaysOnTop(false);
+  calendarWindow.setAlwaysOnTop(true, 'screen-saver');
 }
 
 ipcMain.on('pet-hover', () => {
@@ -743,6 +757,38 @@ ipcMain.on('pet-leave', () => {
 ipcMain.on('calendar-state-changed', (event, visible) => {
   isCalendarVisible = visible;
   updateTrayMenu();
+});
+
+ipcMain.on('calendar-open', () => {
+  if (!calendarWindow || calendarWindow.isDestroyed()) {
+    createCalendarWindow();
+  }
+  if (calendarWindow) {
+    calendarWindow.show();
+    calendarWindow.setIgnoreMouseEvents(true, { forward: true });
+    isCalendarVisible = true;
+    updateTrayMenu();
+  }
+});
+
+ipcMain.on('calendar-close', () => {
+  if (calendarWindow && !calendarWindow.isDestroyed()) {
+    calendarWindow.hide();
+    isCalendarVisible = false;
+    updateTrayMenu();
+  }
+});
+
+ipcMain.on('calendar-hover', () => {
+  if (calendarWindow && !calendarWindow.isDestroyed()) {
+    calendarWindow.setIgnoreMouseEvents(false);
+  }
+});
+
+ipcMain.on('calendar-leave', () => {
+  if (calendarWindow && !calendarWindow.isDestroyed()) {
+    calendarWindow.setIgnoreMouseEvents(true, { forward: true });
+  }
 });
 
 // IPC Handler to return a list of parsed installed apps for React
@@ -769,6 +815,14 @@ ipcMain.handle('launch-installed-app', async (event, appName) => {
 });
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      app.dock.hide();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   if (!isDev) {
     try {
       app.setLoginItemSettings({

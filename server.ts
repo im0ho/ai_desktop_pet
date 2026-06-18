@@ -22,22 +22,27 @@ app.use((req, res, next) => {
     next();
   }
 });
-//사용자 api입력
-function resolveApiKey(req: express.Request) {
-  const bodyKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : "";
-  const headerKey = typeof req.header("x-gemini-api-key") === "string" ? req.header("x-gemini-api-key") || "" : "";
-  return (bodyKey || headerKey).trim();
-}
 
-function createAi(apiKey: string) {
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
+// 환경변수에 GEMINI_API_KEY가 있고 유효한 값인 경우에만 GoogleGenAI 인스턴스를 동적으로 생성해주는 헬퍼 함수
+function getGeminiClient(customApiKey?: string) {
+  const apiKey = (customApiKey && customApiKey.trim() !== "") ? customApiKey : (process.env.GEMINI_API_KEY || "");
+  if (!apiKey || apiKey.trim() === "" || apiKey === "YOUR_GEMINI_API_KEY") {
+    // API 키가 없거나 기본 플레이스홀더인 경우 null 반환
+    return null;
+  }
+  try {
+    return new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
       }
-    }
-  });
+    });
+  } catch (err) {
+    console.error("Gemini 클라이언트 인증 오류:", err);
+    return null;
+  }
 }
 
 // -------------------------------------------------------------------------
@@ -226,8 +231,8 @@ function handleLocalChat(messages: any[], calendarEvents: any[]) {
 
 // AI 채팅 처리 라우트 (Gemini 연동 + 로컬 지능형 폴백)
 app.post("/api/chat", async (req, res) => {
-  const { messages, calendarEvents } = req.body;
-  const aiClient = getGeminiClient();
+  const { messages, calendarEvents, apiKey } = req.body;
+  const aiClient = getGeminiClient(apiKey);
 
   // 1. API 키가 유효하게 등록되지 않은 경우 로컬 지능형 엔진으로 우회 즉각 처리
   if (!aiClient) {
@@ -346,8 +351,8 @@ app.post("/api/chat", async (req, res) => {
 
 // 자동 알림 및 일정 스마트 추천 라우트 (Gemini 연동 + 로컬 지능형 폴백)
 app.post("/api/recommend", async (req, res) => {
-  const { calendarEvents } = req.body;
-  const aiClient = getGeminiClient();
+  const { calendarEvents, apiKey } = req.body;
+  const aiClient = getGeminiClient(apiKey);
 
   // 1. API 키가 존재하지 않을 때 로컬 캘린더 데이터를 기반으로 한 지능형 한글 리마인드 응답 생성
   if (!aiClient) {
