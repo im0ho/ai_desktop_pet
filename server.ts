@@ -22,27 +22,22 @@ app.use((req, res, next) => {
     next();
   }
 });
+//사용자 api입력
+function resolveApiKey(req: express.Request) {
+  const bodyKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : "";
+  const headerKey = typeof req.header("x-gemini-api-key") === "string" ? req.header("x-gemini-api-key") || "" : "";
+  return (bodyKey || headerKey).trim();
+}
 
-// 환경변수에 GEMINI_API_KEY가 있고 유효한 값인 경우에만 GoogleGenAI 인스턴스를 동적으로 생성해주는 헬퍼 함수
-function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY || "";
-  if (!apiKey || apiKey.trim() === "" || apiKey === "YOUR_GEMINI_API_KEY") {
-    // API 키가 없거나 기본 플레이스홀더인 경우 null 반환
-    return null;
-  }
-  try {
-    return new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
+function createAi(apiKey: string) {
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
       }
-    });
-  } catch (err) {
-    console.error("Gemini 클라이언트 인증 오류:", err);
-    return null;
-  }
+    }
+  });
 }
 
 // -------------------------------------------------------------------------
