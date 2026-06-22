@@ -28,6 +28,7 @@ interface PetProps {
   petColor?: string;
   characterType?: 'original' | 'rabbit' | 'cat' | 'hamster' | 'dog' | 'bear';
   equippedItem?: 'none' | 'sunglasses' | 'hat' | 'ribbon';
+  customPetImage?: string | null;
 }
 
 type CharacterType = 'original' | 'rabbit' | 'cat' | 'hamster' | 'dog' | 'bear';
@@ -331,7 +332,7 @@ const PetCharacter = ({
 export const Pet: React.FC<PetProps> = ({ 
   status, isTalking, lastMessage, onDoubleClickPet,
   showChatInput, onToggleChat, showCalendar, onToggleCalendar, onSendMessage, isLoading, messages, dragConstraints,
-  showStatus = false, onToggleStatus, petScale = 100, petColor = '#6366f1', characterType = 'rabbit', equippedItem = 'none',
+  showStatus = false, onToggleStatus, petScale = 100, petColor = '#6366f1', characterType = 'rabbit', equippedItem = 'none', customPetImage = null,
 }) => {
   const [petBubble, setPetBubble] = useState('');
 
@@ -405,11 +406,22 @@ export const Pet: React.FC<PetProps> = ({
             }}
             className="w-full h-full"
           >
-            <PetCharacter
-              characterType={(characterType || 'bear') as CharacterType}
-              petColor={petColor}
-              equippedItem={(equippedItem || 'none') as EquippedItem}
-            />
+            {customPetImage ? (
+              <img
+                src={customPetImage}
+                alt="custom pet"
+                className="w-full h-full object-contain drop-shadow-2xl"
+                style={{ imageRendering: 'pixelated' }}
+                draggable={false}
+              />
+            ) : (
+
+              <PetCharacter
+                characterType={(characterType || 'bear') as CharacterType}
+                petColor={petColor}
+                equippedItem={(equippedItem || 'none') as EquippedItem}
+              />
+            )}
           </motion.div>
         </div>
 

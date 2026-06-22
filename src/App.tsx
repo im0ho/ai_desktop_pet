@@ -16,6 +16,7 @@ const apiBase = isElectron ? 'http://localhost:3000' : '';
 const currentPath = typeof window !== 'undefined' ? window.location.hash : '';
 
 export default function App() {
+  const [isPhotoEditorOpen, setIsPhotoEditorOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   
   const statusDragControls = useDragControls();
@@ -147,6 +148,8 @@ export default function App() {
     }
     return '#6366f1';
   });
+
+  const [customPetImage, setCustomPetImage] = useState<string | null>(null);
 
   const [characterType, setCharacterType] = useState<'original' | 'rabbit' | 'cat' | 'hamster' | 'dog' | 'bear'>(() => {
     if (typeof window !== 'undefined') {
@@ -944,6 +947,7 @@ export default function App() {
                    petColor={petColor}
                    characterType={characterType}
                    equippedItem={equippedItem}
+                   customPetImage={customPetImage}
                 />
               </motion.div>
             )}
@@ -959,7 +963,7 @@ export default function App() {
               initial={{ opacity: 0, x: 50, scale: 0.95 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: 50, scale: 0.95 }}
-              drag
+              drag={!isPhotoEditorOpen}
               dragMomentum={false}
               dragElastic={0}
               dragConstraints={containerRef}
@@ -988,6 +992,12 @@ export default function App() {
                 onUpdateEquippedItem={setEquippedItem}
                 petColor={petColor}
                 onUpdatePetColor={setPetColor}
+                customPetImage={customPetImage}
+                onUpdateCustomPetImage={setCustomPetImage}
+                customPetImage={customPetImage}
+                onUpdateCustomPetImage={setCustomPetImage}
+
+                onPhotoEditorOpenChange={setIsPhotoEditorOpen}
               />
             </motion.div>
           </div>
